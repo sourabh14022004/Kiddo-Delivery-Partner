@@ -317,9 +317,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
           <RefreshControl 
             refreshing={refreshing} 
             onRefresh={() => loadOrders(true)}
-            tintColor={theme.colors.success}
-            colors={[theme.colors.success]}
-            progressBackgroundColor={theme.colors.primaryDark}
+            tintColor="#66FF66"
+            colors={["#66FF66"]}
+            progressBackgroundColor="#000000"
           />
         }
       >
@@ -372,7 +372,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
                         )}
                       </View>
                       
-                      <Text style={styles.orderDescription} numberOfLines={3}>
+                      <Text style={styles.orderDescription} numberOfLines={2}>
                         {fullAddress}
                       </Text>
 
@@ -759,58 +759,62 @@ const styles = StyleSheet.create({
   },
   orderCard: {
     backgroundColor: theme.colors.primaryDark,
-    borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing.md,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing.sm,
     borderWidth: 1,
     borderColor: theme.colors.success,
     ...theme.shadows.medium,
     overflow: 'hidden',
   },
   orderCardContent: {
-    padding: theme.spacing.lg,
+    padding: theme.spacing.md,
   },
   orderHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
   },
   orderNumber: {
-    ...theme.typography.h3,
+    ...theme.typography.body,
+    fontSize: 16,
     color: theme.colors.textLight,
     fontWeight: '700',
   },
   orderPrice: {
-    ...theme.typography.h3,
+    ...theme.typography.body,
+    fontSize: 16,
     color: theme.colors.textLight,
     fontWeight: '700',
   },
   orderDescription: {
     ...theme.typography.bodySmall,
+    fontSize: 13,
     color: theme.colors.textLight,
     opacity: 0.8,
-    lineHeight: 20,
-    marginBottom: theme.spacing.md,
+    lineHeight: 18,
+    marginBottom: theme.spacing.sm,
   },
   badgesRow: {
     flexDirection: 'row',
-    gap: theme.spacing.sm,
-    marginBottom: theme.spacing.md,
+    gap: theme.spacing.xs,
+    marginBottom: theme.spacing.sm,
   },
   badgeItem: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 4,
     borderRadius: theme.borderRadius.pill,
     backgroundColor: theme.colors.badgeGreen,
   },
   badgePrepaid: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 4,
     borderRadius: theme.borderRadius.pill,
     backgroundColor: theme.colors.badgeBlue,
   },
   badgeText: {
     ...theme.typography.caption,
+    fontSize: 11,
     color: theme.colors.textLight,
     fontWeight: '700',
   },
@@ -838,11 +842,11 @@ const styles = StyleSheet.create({
   },
   pickButton: {
     backgroundColor: theme.colors.success,
-    paddingVertical: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
     borderRadius: theme.borderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: theme.spacing.sm,
+    marginTop: theme.spacing.xs,
   },
   pickButtonDisabled: {
     opacity: 0.6,
