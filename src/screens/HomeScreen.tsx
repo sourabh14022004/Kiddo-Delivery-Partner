@@ -189,6 +189,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
             ) : (
               filteredOrders.map((order) => {
                 const isPicking = pickingOrderId === order.id;
+                const financialStatus = order.displayFinancialStatus || 'PENDING';
+                const isCOD = financialStatus !== 'PAID' && financialStatus !== 'AUTHORIZED';
+                const orderType = isCOD ? 'COD' : 'Prepaid';
+                
                 return (
                   <TouchableOpacity
                     key={order.id}
@@ -196,7 +200,12 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
                     activeOpacity={0.85}
                     onPress={() => onOrderSelect?.(order.id)}
                   >
-                    <Text style={styles.orderNumber}>{order.name}</Text>
+                    <View style={styles.cardHeader}>
+                      <Text style={styles.orderNumber}>{order.name}</Text>
+                      <View style={[styles.orderTypeBadge, isCOD ? styles.codBadge : styles.prepaidBadge]}>
+                        <Text style={[styles.orderTypeText, { color: isCOD ? '#E65100' : '#2E7D32' }]}>{orderType}</Text>
+                      </View>
+                    </View>
 
                     <Text numberOfLines={2} style={styles.address}>
                       {order.shippingAddress?.address1},{' '}
@@ -374,12 +383,40 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
   },
 
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
   orderNumber: {
     fontWeight: '700',
     fontSize: 16,
-    marginBottom: 6,
+    flex: 1,
+  },
+  orderTypeBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  codBadge: {
+    backgroundColor: '#FFF3E0',
+  },
+  prepaidBadge: {
+    backgroundColor: '#E8F5E9',
+  },
+  orderTypeText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
 
   address: {
