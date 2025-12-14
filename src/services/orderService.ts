@@ -298,7 +298,7 @@ export const getOrderDetails = async (orderId: string) => {
  */
 export const updateOrderStatus = async (
   shopifyOrderId: string,
-  status: 'ASSIGNED' | 'PICKED_UP' | 'IN_TRANSIT' | 'DELIVERED',
+  status: 'ASSIGNED' | 'PICKED_UP' | 'IN_TRANSIT' | 'DELIVERED' | 'RETURNED',
   // deliveryImageUrl?: string // Commented out for now
 ): Promise<{ success: boolean; error?: string }> => {
   try {
@@ -317,6 +317,9 @@ export const updateOrderStatus = async (
         ...(status === 'DELIVERED' && { 
           deliveredAt: serverTimestamp(),
           // ...(deliveryImageUrl && { deliveryImageUrl }), // Commented out for now
+        }),
+        ...(status === 'RETURNED' && { 
+          returnedAt: serverTimestamp(),
         }),
       },
       { merge: true }
