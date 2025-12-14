@@ -256,7 +256,7 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: theme.colors.backgroundDark,
     paddingHorizontal: 20,
-    paddingTop: 45,
+    paddingTop: 10,
     paddingBottom: 16,
     flexDirection: 'row',
     alignItems: 'center',

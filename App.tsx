@@ -87,37 +87,29 @@ export default function App() {
         
         let userPickerDetails: PickerDetails | null = null;
         
-        // Try to get latest data from Firebase (optional, non-blocking)
+        // Check if user exists in Firebase database
         try {
           const firebaseData = await getUserDetails(userData.phoneNumber);
           if (firebaseData.success && firebaseData.data) {
-            // Use Firebase data if available (more up-to-date)
+            // User exists in Firebase database - don't show profile screen
             userPickerDetails = firebaseData.data;
-            // Also update local storage with Firebase data
             await storageService.savePickerDetails(firebaseData.data);
-          } else if (userData.pickerDetails) {
-            // Fallback to local storage data
-            userPickerDetails = userData.pickerDetails;
+            setPickerDetails(userPickerDetails);
+            setAppState('home');
+            return;
           }
         } catch (firebaseError) {
-          console.warn('Could not fetch from Firebase, using local data:', firebaseError);
-          // Use local storage data if Firebase fails
-          if (userData.pickerDetails) {
-            userPickerDetails = userData.pickerDetails;
-          }
+          console.warn('Could not fetch from Firebase:', firebaseError);
         }
         
-        // Set picker details state
-        if (userPickerDetails) {
+        // User doesn't exist in Firebase, check local storage
+        if (userData.pickerDetails) {
+          // User has local profile data
+          userPickerDetails = userData.pickerDetails;
           setPickerDetails(userPickerDetails);
-        }
-        
-        // Determine which screen to show
-        if (userPickerDetails) {
-          // User has completed profile
           setAppState('home');
         } else {
-          // User is logged in but hasn't completed profile
+          // User doesn't exist in database and has no local data, show profile form
           setAppState('pickerDetails');
         }
       } else {
@@ -136,13 +128,12 @@ export default function App() {
     await storageService.savePhoneNumber(phone);
     await storageService.saveLoginState(true);
     
-    // First check Firebase for existing user profile
+    // Check if user exists in Firebase database
     try {
       const firebaseData = await getUserDetails(phone);
-      if (firebaseData.success && firebaseData.data && firebaseData.data.fullName) {
-        // User exists in Firebase with complete profile, skip profile form
+      if (firebaseData.success && firebaseData.data) {
+        // User exists in Firebase database - don't show profile screen
         setPickerDetails(firebaseData.data);
-        // Also save to local storage for offline access
         await storageService.savePickerDetails(firebaseData.data);
         setAppState('home');
         return;
@@ -154,10 +145,11 @@ export default function App() {
     // Fallback to local storage check
     const existingDetails = await storageService.getPickerDetails();
     if (existingDetails && existingDetails.fullName) {
+      // User has local profile data
       setPickerDetails(existingDetails);
       setAppState('home');
     } else {
-      // No profile found in Firebase or local storage, show profile form
+      // User doesn't exist in database, show profile form
       setAppState('pickerDetails');
     }
   };

@@ -12,9 +12,10 @@ import {
   ScrollView,
   Animated,
   Keyboard,
+  Image,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { sendOTP, verifyOTP } from '../services/otpService';
+import { sendOTP, verifyOTP, clearOTPStorage } from '../services/otpService';
 import { storageService } from '../services/storageService';
 import { updateLastLogin } from '../services/firebaseService';
 
@@ -171,6 +172,9 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
       // Navigate to home screen
       const formattedPhone = phoneNumber || `+91 ${rawPhoneNumber}`;
       
+      // Clear OTP storage after successful login
+      clearOTPStorage(rawPhoneNumber);
+      
       // Save auth token if available
       if (response.token) {
         await storageService.saveAuthToken(response.token);
@@ -188,13 +192,16 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
       
       console.log('Login successful, token:', response.token);
     } else {
-      Alert.alert('Error', response.error || 'Invalid OTP. Please try again.');
-      // Clear OTP inputs
-      setOtp(['', '', '', '', '', '']);
-      // Small delay before refocusing
-      setTimeout(() => {
-        otpInputRefs.current[0]?.focus();
-      }, 100);
+      // Only show error if we're still on the OTP screen
+      if (step === 'otp') {
+        Alert.alert('Error', response.error || 'Invalid OTP. Please try again.');
+        // Clear OTP inputs
+        setOtp(['', '', '', '', '', '']);
+        // Small delay before refocusing
+        setTimeout(() => {
+          otpInputRefs.current[0]?.focus();
+        }, 100);
+      }
     }
   }, [otp, loading, rawPhoneNumber, phoneNumber, onLoginSuccess]);
 
@@ -304,6 +311,11 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
           <View style={styles.content}>
           {/* Logo/Header */}
           <View style={styles.header}>
+            <Image 
+              source={require('../../assets/icon.png')} 
+              style={styles.logo}
+              resizeMode="contain"
+            />
             <Text style={styles.title}>Kiddo Delivery</Text>
             <Text style={styles.subtitle}>
               {step === 'phone' ? 'Enter your phone number' : 'Enter OTP'}
@@ -466,7 +478,6 @@ const styles = StyleSheet.create({
     padding: 24,
     justifyContent: 'center',
     minHeight: '100%',
-    paddingTop: 40, // Extra padding at top for future image
   },
   keyboardSpacer: {
     width: '100%',
@@ -474,6 +485,12 @@ const styles = StyleSheet.create({
   header: {
     alignItems: 'center',
     marginBottom: 48,
+  },
+  logo: {
+    width: 140,
+    height: 140,
+    marginBottom: 24,
+    borderRadius: 12,
   },
   title: {
     fontSize: 32,

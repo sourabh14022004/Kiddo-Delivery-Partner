@@ -147,7 +147,6 @@ const PickerDetailsScreen: React.FC<PickerDetailsScreenProps> = ({
 
         {/* Profile Photo Upload */}
         <View style={styles.section}>
-          <Text style={styles.label}>Profile Photo (Optional)</Text>
           <TouchableOpacity
             style={styles.photoContainer}
             onPress={pickImage}

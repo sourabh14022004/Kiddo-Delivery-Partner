@@ -23,6 +23,7 @@ export const colors = {
   // Accent colors
   accent: '#007AFF',
   success: '#4CAF50',
+  gray: '#808080',
   error: '#F44336',
   warning: '#FF9800',
   info: '#2196F3',

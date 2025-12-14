@@ -903,23 +903,23 @@ export const updateDeliveryStatus = async (
 
     // Only update fulfillment events if fulfillment exists
     if (fulfillmentId) {
-      console.log(`Updating fulfillment event to ${eventStatus}...`);
+    console.log(`Updating fulfillment event to ${eventStatus}...`);
 
-      // Update the fulfillment event
-      const fulfillmentEventResult = await updateFulfillmentEvent(numericOrderId, fulfillmentId, eventStatus);
+    // Update the fulfillment event
+    const fulfillmentEventResult = await updateFulfillmentEvent(numericOrderId, fulfillmentId, eventStatus);
 
-      if (fulfillmentEventResult.success) {
-        console.log(`Successfully updated delivery status to ${eventStatus}`);
-        return { 
-          success: true, 
-          data: {
-            fulfillmentEvent: fulfillmentEventResult.data,
-            status: eventStatus,
-          }
-        };
-      }
+    if (fulfillmentEventResult.success) {
+      console.log(`Successfully updated delivery status to ${eventStatus}`);
+      return { 
+        success: true, 
+        data: {
+          fulfillmentEvent: fulfillmentEventResult.data,
+          status: eventStatus,
+        }
+      };
+    }
 
-      console.error('Failed to update fulfillment event:', fulfillmentEventResult.error);
+    console.error('Failed to update fulfillment event:', fulfillmentEventResult.error);
     }
     
     // If no fulfillment exists or fulfillment event update fails, add a note as fallback

@@ -33,6 +33,17 @@ const otpStorage: Map<string, StoredOTP> = new Map();
 const OTP_EXPIRY_TIME = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 /**
+ * Clear OTP storage for a phone number (called after successful login)
+ */
+export const clearOTPStorage = (phoneNumber: string): void => {
+  const cleanPhone = phoneNumber.replace(/\D/g, '');
+  if (cleanPhone.length === 10) {
+    otpStorage.delete(cleanPhone);
+    console.log('✅ OTP storage cleared for:', cleanPhone);
+  }
+};
+
+/**
  * Send OTP to the given phone number
  */
 export const sendOTP = async (phoneNumber: string): Promise<SendOTPResponse> => {

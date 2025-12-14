@@ -1,17 +1,16 @@
-import React from 'react';
+import React from "react";
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   Image,
-} from 'react-native';
-import { StatusBar } from 'expo-status-bar';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { PickerDetails } from './PickerDetailsScreen';
-import { theme } from '../config/theme';
+} from "react-native";
+import { StatusBar } from "expo-status-bar";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { PickerDetails } from "./PickerDetailsScreen";
+import { theme } from "../config/theme";
 
 interface ProfileScreenProps {
   phoneNumber?: string;
@@ -30,63 +29,54 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onNavigateToHelpSupport,
   onNavigateToSettings,
 }) => {
-  const userName = pickerDetails?.fullName || 'Delivery Partner';
-  const userPhone = phoneNumber || 'No phone number';
+  const userName = pickerDetails?.fullName || "Delivery Partner";
+  const userPhone = phoneNumber || "No phone number";
 
   return (
-    <SafeAreaView style={styles.container} edges={[]}>
+    <View style={styles.container}>
       <StatusBar style="light" />
+      <SafeAreaView style={styles.safeArea} edges={[]}>
+        {/* HEADER - Fixed */}
+        <View style={styles.header} />
 
-      {/* HEADER - Fixed */}
-      <View style={styles.header} />
-
-      {/* PROFILE CARD - Fixed */}
-      <View style={styles.profileSection}>
-        {pickerDetails?.profilePhoto ? (
-          <Image
-            source={{ uri: pickerDetails.profilePhoto }}
-            style={styles.profileImage}
-          />
-        ) : (
-          <View style={styles.profileImagePlaceholder}>
-            <Text style={styles.profileImageText}>
-              {userName[0]?.toUpperCase()}
-            </Text>
-          </View>
-        )}
-
-        <Text style={styles.profileName}>{userName}</Text>
-        <Text style={styles.profileEmail}>{userPhone}</Text>
-
-        {/* QUICK ACTIONS */}
-        <View style={styles.quickActions}>
-          <TouchableOpacity style={styles.quickActionButton}>
-            <Ionicons
-              name="notifications-outline"
-              size={22}
-              color="#fff"
+        {/* PROFILE CARD - Fixed */}
+        <View style={styles.profileSection}>
+          {pickerDetails?.profilePhoto ? (
+            <Image
+              source={{ uri: pickerDetails.profilePhoto }}
+              style={styles.profileImage}
             />
-            <Text style={styles.quickActionText}>Notification</Text>
-          </TouchableOpacity>
+          ) : (
+            <View style={styles.profileImagePlaceholder}>
+              <Text style={styles.profileImageText}>
+                {userName[0]?.toUpperCase()}
+              </Text>
+            </View>
+          )}
 
-          <TouchableOpacity style={styles.quickActionButton}>
-            <Ionicons name="gift-outline" size={22} color="#fff" />
-            <Text style={styles.quickActionText}>Voucher</Text>
-          </TouchableOpacity>
+          <Text style={styles.profileName}>{userName}</Text>
+          <Text style={styles.profileEmail}>{userPhone}</Text>
 
-          <TouchableOpacity style={styles.quickActionButton}>
-            <Ionicons name="time-outline" size={22} color="#fff" />
-            <Text style={styles.quickActionText}>History</Text>
-          </TouchableOpacity>
+          {/* QUICK ACTIONS */}
+          <View style={styles.quickActions}>
+            <TouchableOpacity style={styles.quickActionButton}>
+              <Ionicons name="notifications-outline" size={22} color="#fff" />
+              <Text style={styles.quickActionText}>Notification</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.quickActionButton}>
+              <Ionicons name="gift-outline" size={22} color="#fff" />
+              <Text style={styles.quickActionText}>Voucher</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.quickActionButton}>
+              <Ionicons name="time-outline" size={22} color="#fff" />
+              <Text style={styles.quickActionText}>History</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
 
-      {/* SETTINGS - Scrollable */}
-      <ScrollView 
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
+        {/* SETTINGS - Fixed */}
         <View style={styles.settingsSection}>
           <View style={styles.settingsItemContainer}>
             <SettingsItem
@@ -95,7 +85,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
               onPress={onNavigateToEditProfile}
             />
           </View>
-          
+
           <View style={styles.settingsItemContainer}>
             <SettingsItem
               icon="headset-outline"
@@ -103,7 +93,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
               onPress={onNavigateToHelpSupport}
             />
           </View>
-          
+
           <View style={styles.settingsItemContainer}>
             <SettingsItem
               icon="settings-outline"
@@ -126,20 +116,20 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </TouchableOpacity>
           </View>
         </View>
-      </ScrollView>
-    </SafeAreaView>
+      </SafeAreaView>
+    </View>
   );
 };
 
 /* ---------------- REUSABLE ITEM ---------------- */
 
-const SettingsItem = ({ 
-  icon, 
-  label, 
-  onPress 
-}: { 
-  icon: any; 
-  label: string; 
+const SettingsItem = ({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: any;
+  label: string;
   onPress?: () => void;
 }) => (
   <TouchableOpacity style={styles.settingsItem} onPress={onPress}>
@@ -159,31 +149,27 @@ const SettingsItem = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F6F7F9',
+    backgroundColor: "#111",
   },
-
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#111",
+  },
   header: {
-    backgroundColor: '#111',
-    paddingHorizontal: 20,
+    backgroundColor: "#111",
     paddingTop: 45,
     paddingBottom: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
   },
 
-  scrollView: {
-    flex: 1,
-  },
-
-  scrollContent: {
-    flexGrow: 1,
-  },
 
   headerTitle: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#fff',
+    fontWeight: "700",
+    color: "#fff",
     paddingTop: 8,
   },
 
@@ -191,20 +177,24 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#E5E5E5',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#E5E5E5",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   profileSection: {
-    backgroundColor: '#111',
+    backgroundColor: "#111",
+    borderColor: "black",
     borderBottomLeftRadius: 28,
     borderBottomRightRadius: 28,
-    alignItems: 'center',
+    alignItems: "center",
     paddingTop: 20,
     paddingBottom: 30,
     borderBottomWidth: 2,
-    borderBottomColor: theme.colors.success,
+    width: "100%",
+    alignSelf: "stretch",
+    marginLeft: 0,
+    marginRight: 0,
   },
 
   profileImage: {
@@ -212,7 +202,7 @@ const styles = StyleSheet.create({
     height: 110,
     borderRadius: 55,
     borderWidth: 3,
-    borderColor: '#fff',
+    borderColor: "#fff",
     marginBottom: 12,
   },
 
@@ -220,32 +210,32 @@ const styles = StyleSheet.create({
     width: 110,
     height: 110,
     borderRadius: 55,
-    backgroundColor: '#2B2B2B',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#2B2B2B",
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: 12,
   },
 
   profileImageText: {
     fontSize: 40,
-    fontWeight: '700',
-    color: '#fff',
+    fontWeight: "700",
+    color: "#fff",
   },
 
   profileName: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#fff',
+    fontWeight: "700",
+    color: "#fff",
   },
 
   profileEmail: {
     fontSize: 14,
-    color: '#B5B5B5',
+    color: "#B5B5B5",
     marginTop: 4,
   },
 
   quickActions: {
-    flexDirection: 'row',
+    flexDirection: "row",
     marginTop: 24,
     paddingHorizontal: 16,
     gap: 12,
@@ -253,43 +243,46 @@ const styles = StyleSheet.create({
 
   quickActionButton: {
     flex: 1,
-    backgroundColor: '#1C1C1C',
+    backgroundColor: "#1C1C1C",
     borderRadius: 16,
     paddingVertical: 14,
-    alignItems: 'center',
+    alignItems: "center",
     borderWidth: 1,
     borderColor: theme.colors.success,
   },
 
   quickActionText: {
     fontSize: 12,
-    color: '#EAEAEA',
+    color: "#EAEAEA",
     marginTop: 6,
-    fontWeight: '600',
+    fontWeight: "600",
   },
 
   settingsSection: {
-    backgroundColor: '#fff',
+    // zIndex: 1,
+    flex: 1,
+    backgroundColor: "#fff",
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     marginTop: 15,
-    paddingTop: 12,
+    paddingTop: 18,
     paddingBottom: 30,
     paddingHorizontal: 16,
+    
   },
 
   settingsItemContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: 1,
     borderColor: theme.colors.success,
     marginBottom: 12,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
 
   settingsItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 16,
     paddingHorizontal: 20,
   },
@@ -301,13 +294,13 @@ const styles = StyleSheet.create({
   settingsText: {
     flex: 1,
     fontSize: 15,
-    fontWeight: '500',
-    color: '#111',
+    fontWeight: "500",
+    color: "#111",
   },
 
   logoutText: {
-    color: '#E53935',
-    fontWeight: '600',
+    color: "#E53935",
+    fontWeight: "600",
   },
 });
 

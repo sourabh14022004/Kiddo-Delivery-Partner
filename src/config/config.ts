@@ -56,7 +56,7 @@ export const OTP_API_BASE_URL = 'https://sms.shinenetcore.in/api/v2';
 export const OTP_SENDER_ID = 'SNCOTP';
 export const OTP_API_KEY = '3Ri5Du6T3fbCAfWs9L5gUfOSn4pbofa/DjZucAqwplo=';
 export const OTP_CLIENT_ID = 'b00a4a12-c1f3-420f-ae2c-e69988212928';
-export const OTP_MESSAGE_TEMPLATE = 'One time OTP From Kiddo App {otp} to login or activate your profile apsops SNC';
+export const OTP_MESSAGE_TEMPLATE = 'One time OTP From Kiddo Delivery Partner App {otp} to login or activate your profile apsops SNC';
 export const OTP_EXPIRY_MINUTES = 5; // OTP expiration time in minutes
 export const OTP_USE_ANDROID_HASH = false; // Set to false if SMS provider has issues with hash format
 
