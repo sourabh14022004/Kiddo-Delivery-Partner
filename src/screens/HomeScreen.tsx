@@ -1,9 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   TextInput,
   Image,
@@ -11,8 +10,13 @@ import {
   RefreshControl,
   Alert,
   Platform,
+  Animated,
+  LayoutAnimation,
+  UIManager,
+  Dimensions,
+  Easing,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,17 +26,21 @@ import { fetchOrders, ShopifyOrder } from '../services/shopifyService';
 import {
   syncShopifyOrderToFirestore,
   assignOrderToRider,
-  isOrderAssigned,
+  batchCheckOrderAssignments,
 } from '../services/orderService';
 import { startLocationTracking } from '../services/locationService';
+import { storageService } from '../services/storageService';
 import LoadingScreen from '../components/LoadingScreen';
 import { theme } from '../config/theme';
+import { isProfileComplete, getIncompleteProfileMessage } from '../utils/profileValidation';
 
 interface HomeScreenProps {
   phoneNumber?: string;
   pickerDetails?: PickerDetails | null;
   onOrderSelect?: (orderId: string) => void;
   onOrderPicked?: (orderId: string) => void;
+  onViewOrderDetails?: (orderId: string) => void;
+  refreshTrigger?: number; // Key prop from App.tsx triggers remount, but this allows soft refresh
 }
 
 const HomeScreen: React.FC<HomeScreenProps> = ({
@@ -40,26 +48,99 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
   pickerDetails,
   onOrderSelect,
   onOrderPicked,
+  onViewOrderDetails,
+  refreshTrigger,
 }) => {
   const [orders, setOrders] = useState<ShopifyOrder[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start with false for instant UI
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [pickingOrderId, setPickingOrderId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   const userName = pickerDetails?.fullName?.split(' ')[0] || 'Partner';
   const userLocation = 'Location';
+  const insets = useSafeAreaInsets();
+  const windowHeight = Dimensions.get('window').height;
+
+  // Collapsing header: nothing until scroll > 25%; then header hide + search bar shift together
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const HEADER_COLLAPSE_THRESHOLD = Math.round(windowHeight * 0.25); // exactly 25%
+  const HEADER_EXPAND_THRESHOLD = Math.round(windowHeight * 0.15);
+  const HEADER_ROW_HEIGHT = 120;
+  const FADE_WINDOW = 50; // short fade/slide right after 25% so hide + shift feel simultaneous
+
+  // Android: explicit height animation (LayoutAnimation is unreliable on Android)
+  const headerHeightAnim = useRef(new Animated.Value(HEADER_ROW_HEIGHT)).current;
+  const COLLAPSE_DURATION = 250;
+
+  // Fade and slide only after 25%: stay visible until threshold, then hide over a short range
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, HEADER_COLLAPSE_THRESHOLD, HEADER_COLLAPSE_THRESHOLD + FADE_WINDOW],
+    outputRange: [1, 1, 0],
+    extrapolate: 'clamp',
+  });
+  const headerTranslateY = scrollY.interpolate({
+    inputRange: [0, HEADER_COLLAPSE_THRESHOLD, HEADER_COLLAPSE_THRESHOLD + FADE_WINDOW],
+    outputRange: [0, 0, -50],
+    extrapolate: 'clamp',
+  });
+
+  // Search bar padding on Android: interpolate from header height so it animates with collapse
+  const searchPaddingTopAndroid = headerHeightAnim.interpolate({
+    inputRange: [0, HEADER_ROW_HEIGHT],
+    outputRange: [insets.top, 0],
+    extrapolate: 'clamp',
+  });
 
   useEffect(() => {
-    loadOrders();
+    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
   }, []);
 
-  const loadOrders = async (refresh = false) => {
+  useEffect(() => {
+    loadOrdersWithCache();
+  }, []);
+
+  // Refresh when refreshTrigger changes (from App.tsx notifications)
+  useEffect(() => {
+    if (refreshTrigger !== undefined && refreshTrigger > 0) {
+      // Soft refresh - show cache instantly, then update in background
+      loadOrdersWithCache();
+    }
+  }, [refreshTrigger]);
+
+  // PRODUCTION-GRADE: Load orders with instant cache + background refresh
+  const loadOrdersWithCache = async () => {
+    setIsInitialLoad(true);
+
+    // Step 1: INSTANT - Load cached orders immediately (0ms)
+    const cachedOrders = await storageService.getCachedOrders(10 * 60 * 1000); // 10 min cache
+    if (cachedOrders && cachedOrders.length > 0) {
+      setOrders(cachedOrders);
+      setIsInitialLoad(false);
+    } else {
+      // No cache, show loading only on first load
+      setLoading(true);
+    }
+
+    // Step 2: BACKGROUND - Fetch fresh data (non-blocking)
+    loadOrders(true);
+  };
+
+  const loadOrders = async (refresh = false, skipCache = false) => {
     try {
-      refresh ? setRefreshing(true) : setLoading(true);
+      if (refresh && !skipCache) {
+        setRefreshing(true);
+      } else if (!skipCache) {
+        setLoading(true);
+      }
       setError(null);
 
+      // Fetch orders from Shopify
       const res = await fetchOrders(20);
       if (!res.success || !res.data) throw new Error(res.error);
 
@@ -67,22 +148,35 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
         .map((e) => e.node)
         .filter(
           (o) =>
+            !o.cancelledAt &&
             o.displayFulfillmentStatus !== 'FULFILLED' &&
             o.displayFulfillmentStatus !== 'DELIVERED'
         );
 
-      const unassigned: ShopifyOrder[] = [];
-      for (const o of nodes) {
-        const assigned = await isOrderAssigned(o.id);
-        if (!assigned) unassigned.push(o);
-      }
+      // OPTIMIZATION: Batch check all orders in parallel
+      const orderIds = nodes.map(o => o.id);
+      const assignmentMap = await batchCheckOrderAssignments(orderIds);
 
+      const unassigned = nodes.filter(order => !assignmentMap.get(order.id));
+
+      // Update UI with fresh data
       setOrders(unassigned);
+
+      // Cache the fresh data for next time (instant loading)
+      await storageService.saveCachedOrders(unassigned);
     } catch (e: any) {
       setError(e.message || 'Failed to load orders');
+      // If we have cached data, keep showing it even on error
+      if (orders.length === 0) {
+        const cachedOrders = await storageService.getCachedOrders(24 * 60 * 60 * 1000); // 24h fallback
+        if (cachedOrders) {
+          setOrders(cachedOrders);
+        }
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setIsInitialLoad(false);
     }
   };
 
@@ -97,8 +191,21 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
   });
 
   const handlePickOrder = async (order: ShopifyOrder) => {
+    // ✅ Check if user is logged in
     if (!phoneNumber) {
-      Alert.alert('Login required');
+      Alert.alert('Login Required', 'Please log in to pick orders.');
+      return;
+    }
+
+    // ✅ Check if profile is complete
+    if (!isProfileComplete(pickerDetails)) {
+      Alert.alert(
+        'Profile Incomplete',
+        getIncompleteProfileMessage(),
+        [
+          { text: 'OK', style: 'cancel' },
+        ]
+      );
       return;
     }
 
@@ -122,59 +229,168 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
     <SafeAreaView style={styles.container} edges={[]}>
       <StatusBar style="light" />
 
-      {/* ================= HEADER ================= */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          {pickerDetails?.profilePhoto ? (
-            <Image source={{ uri: pickerDetails.profilePhoto }} style={styles.avatar} />
-          ) : (
-            <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarText}>{userName[0]}</Text>
-            </View>
-          )}
+      {/* ================= HEADER (fade/slide on scroll, then collapse) + SEARCH ================= */}
+      {/* No top inset here so initial position is unchanged; safe area only when collapsed */}
+      <View style={styles.headerContainer} pointerEvents="box-none">
+        {Platform.OS === 'android' ? (
+          <Animated.View
+            style={[
+              styles.headerCollapseSection,
+              { height: headerHeightAnim },
+            ]}
+          >
+            <Animated.View
+              style={[
+                styles.header,
+                {
+                  opacity: headerOpacity,
+                  transform: [{ translateY: headerTranslateY }],
+                },
+              ]}
+            >
+              <View style={styles.headerLeft}>
+                {pickerDetails?.profilePhoto ? (
+                  <Image source={{ uri: pickerDetails.profilePhoto }} style={styles.avatar} />
+                ) : (
+                  <View style={styles.avatarPlaceholder}>
+                    <Text style={styles.avatarText}>{userName[0]}</Text>
+                  </View>
+                )}
 
-          <View>
-            <Text style={styles.greeting}>Hey {userName}</Text>
-            <View style={styles.locationRow}>
-              <Ionicons name="location" size={14} color={theme.colors.success} />
-              <Text style={styles.location}>{userLocation}</Text>
+                <View>
+                  <Text style={styles.greeting}>Hey {userName}</Text>
+                  <View style={styles.locationRow}>
+                    <Ionicons name="location" size={14} color={theme.colors.success} />
+                    <Text style={styles.location}>{userLocation}</Text>
+                  </View>
+                </View>
+              </View>
+
+              <TouchableOpacity style={styles.notify}>
+                <Ionicons name="notifications-outline" size={24} color="#fff" />
+              </TouchableOpacity>
+            </Animated.View>
+          </Animated.View>
+        ) : (
+          <View
+            style={[
+              styles.headerCollapseSection,
+              { height: headerCollapsed ? 0 : HEADER_ROW_HEIGHT },
+            ]}
+          >
+            <Animated.View
+              style={[
+                styles.header,
+                {
+                  opacity: headerOpacity,
+                  transform: [{ translateY: headerTranslateY }],
+                },
+              ]}
+            >
+              <View style={styles.headerLeft}>
+                {pickerDetails?.profilePhoto ? (
+                  <Image source={{ uri: pickerDetails.profilePhoto }} style={styles.avatar} />
+                ) : (
+                  <View style={styles.avatarPlaceholder}>
+                    <Text style={styles.avatarText}>{userName[0]}</Text>
+                  </View>
+                )}
+
+                <View>
+                  <Text style={styles.greeting}>Hey {userName}</Text>
+                  <View style={styles.locationRow}>
+                    <Ionicons name="location" size={14} color={theme.colors.success} />
+                    <Text style={styles.location}>{userLocation}</Text>
+                  </View>
+                </View>
+              </View>
+
+              <TouchableOpacity style={styles.notify}>
+                <Ionicons name="notifications-outline" size={24} color="#fff" />
+              </TouchableOpacity>
+            </Animated.View>
+          </View>
+        )}
+
+        {/* Search bar – safe area padding only when collapsed (Android: animated; iOS: state) */}
+        {Platform.OS === 'android' ? (
+          <Animated.View style={[styles.searchWrapper, { paddingTop: searchPaddingTopAndroid }]}>
+            <View style={[styles.searchBar, styles.searchBarAndroid]}>
+              <Ionicons name="search" size={18} color="#888" />
+              <TextInput
+                placeholder="Search Shipping"
+                placeholderTextColor="#888"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                style={styles.searchInput}
+              />
+            </View>
+          </Animated.View>
+        ) : (
+          <View style={[styles.searchWrapper, headerCollapsed && { paddingTop: insets.top }]}>
+            <View style={[styles.searchBar, styles.searchBarIOS]}>
+              <Ionicons name="search" size={18} color="#888" />
+              <TextInput
+                placeholder="Search Shipping"
+                placeholderTextColor="#888"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                style={styles.searchInput}
+              />
             </View>
           </View>
-        </View>
-
-        <TouchableOpacity style={styles.notify}>
-          <Ionicons name="notifications-outline" size={24} color="#fff" />
-        </TouchableOpacity>
-      </View>
-
-      {/* ================= SEARCH ================= */}
-      <View style={styles.searchWrapper}>
-        <View style={[styles.searchBar, Platform.OS === 'ios' ? styles.searchBarIOS : styles.searchBarAndroid]}>
-          <Ionicons name="search" size={18} color="#888" />
-          <TextInput
-            placeholder="Search Shipping"
-            placeholderTextColor="#888"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            style={styles.searchInput}
-          />
-        </View>
+        )}
       </View>
 
       {/* ================= CONTENT ================= */}
-      <ScrollView
+      <Animated.ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingTop: 8 }}
+        scrollEventThrottle={16}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          {
+            useNativeDriver: true,
+            listener: (e: { nativeEvent: { contentOffset: { y: number } } }) => {
+              const y = e.nativeEvent.contentOffset.y;
+              if (y >= HEADER_COLLAPSE_THRESHOLD && !headerCollapsed) {
+                setHeaderCollapsed(true);
+                if (Platform.OS === 'android') {
+                  Animated.timing(headerHeightAnim, {
+                    toValue: 0,
+                    duration: COLLAPSE_DURATION,
+                    useNativeDriver: false,
+                    easing: Easing.out(Easing.cubic),
+                  }).start();
+                } else {
+                  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                }
+              } else if (y <= HEADER_EXPAND_THRESHOLD && headerCollapsed) {
+                setHeaderCollapsed(false);
+                if (Platform.OS === 'android') {
+                  Animated.timing(headerHeightAnim, {
+                    toValue: HEADER_ROW_HEIGHT,
+                    duration: COLLAPSE_DURATION,
+                    useNativeDriver: false,
+                    easing: Easing.out(Easing.cubic),
+                  }).start();
+                } else {
+                  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                }
+              }
+            },
+          }
+        )}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => loadOrders(true)}
+            onRefresh={() => loadOrders(true, true)}
           />
         }
       >
-        {loading ? (
+        {loading && isInitialLoad ? (
           <LoadingScreen message="Loading orders..." />
-        ) : error ? (
+        ) : error && orders.length === 0 ? (
           <Text style={styles.error}>{error}</Text>
         ) : (
           <View style={styles.orders}>
@@ -182,9 +398,18 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
 
             {filteredOrders.length === 0 ? (
               <View style={styles.empty}>
-                <Text style={styles.emptyIcon}>📦</Text>
+                <View style={styles.emptyIconContainer}>
+                  <Ionicons name="cube-outline" size={64} color="#CCC" />
+                </View>
                 <Text style={styles.emptyTitle}>No orders available</Text>
-                <Text style={styles.emptySub}>Check back later</Text>
+                <Text style={styles.emptySub}>New orders will appear here when available</Text>
+                <TouchableOpacity
+                  style={styles.refreshButton}
+                  onPress={() => loadOrders(true, true)}
+                >
+                  <Ionicons name="refresh" size={18} color={theme.colors.success} />
+                  <Text style={styles.refreshButtonText}>Refresh</Text>
+                </TouchableOpacity>
               </View>
             ) : (
               filteredOrders.map((order) => {
@@ -192,25 +417,40 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
                 const financialStatus = order.displayFinancialStatus || 'PENDING';
                 const isCOD = financialStatus !== 'PAID' && financialStatus !== 'AUTHORIZED';
                 const orderType = isCOD ? 'COD' : 'Prepaid';
-                
+
+
+
                 return (
                   <TouchableOpacity
                     key={order.id}
                     style={styles.card}
                     activeOpacity={0.85}
-                    onPress={() => onOrderSelect?.(order.id)}
+                    onPress={() => onViewOrderDetails?.(order.id)}
                   >
                     <View style={styles.cardHeader}>
-                      <Text style={styles.orderNumber}>{order.name}</Text>
+                      <View style={styles.orderNumberRow}>
+                        <Ionicons name="cube-outline" size={20} color="#000" style={styles.orderIcon} />
+                        <Text style={styles.orderNumber}>{order.name}</Text>
+                      </View>
                       <View style={[styles.orderTypeBadge, isCOD ? styles.codBadge : styles.prepaidBadge]}>
-                        <Text style={[styles.orderTypeText, { color: isCOD ? '#E65100' : '#2E7D32' }]}>{orderType}</Text>
+                        <Ionicons
+                          name={isCOD ? "cash-outline" : "checkmark-circle-outline"}
+                          size={14}
+                          color={isCOD ? '#E65100' : '#2E7D32'}
+                        />
+                        <Text style={[styles.orderTypeText, { color: isCOD ? '#E65100' : '#2E7D32' }]}>
+                          {orderType}
+                        </Text>
                       </View>
                     </View>
 
-                    <Text numberOfLines={2} style={styles.address}>
-                      {order.shippingAddress?.address1},{' '}
-                      {order.shippingAddress?.city}
-                    </Text>
+                    <View style={styles.addressRow}>
+                      <Ionicons name="location-outline" size={16} color="#666" style={styles.addressIcon} />
+                      <Text numberOfLines={2} style={styles.address}>
+                        {order.shippingAddress?.address1}, {order.shippingAddress?.city}
+                      </Text>
+                    </View>
+
 
                     <TouchableOpacity
                       style={[styles.pickBtn, isPicking && { opacity: 0.6 }]}
@@ -223,7 +463,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
                       {isPicking ? (
                         <ActivityIndicator color="#fff" />
                       ) : (
-                        <Text style={styles.pickText}>Pick This Order</Text>
+                        <>
+                          <Ionicons name="checkmark-circle" size={20} color="#fff" style={styles.pickIcon} />
+                          <Text style={styles.pickText}>Pick This Order</Text>
+                        </>
                       )}
                     </TouchableOpacity>
                   </TouchableOpacity>
@@ -232,7 +475,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
             )}
           </View>
         )}
-      </ScrollView>
+      </Animated.ScrollView>
 
       {/* ================= TOP FADE (MASK) ================= */}
       <LinearGradient
@@ -268,6 +511,16 @@ const styles = StyleSheet.create({
     right: 0,
     height: 230,
     zIndex: 20,
+  },
+
+  headerContainer: {
+    zIndex: 30,
+    elevation: 30,
+    overflow: 'hidden',
+  },
+
+  headerCollapseSection: {
+    overflow: 'hidden',
   },
 
   header: {
@@ -373,40 +626,52 @@ const styles = StyleSheet.create({
   },
 
   sectionTitle: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '700',
-    marginBottom: 16,
+    marginBottom: 20,
+    color: '#000',
   },
 
   card: {
     backgroundColor: '#fff',
     borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
+    padding: 18,
+    marginBottom: 20,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 5,
     borderWidth: 1,
-    borderColor: '#F0F0F0',
+    borderColor: '#F5F5F5',
   },
 
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 12,
+  },
+  orderNumberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  orderIcon: {
+    marginRight: 8,
   },
   orderNumber: {
     fontWeight: '700',
-    fontSize: 16,
-    flex: 1,
+    fontSize: 17,
+    color: '#000',
   },
   orderTypeBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   codBadge: {
     backgroundColor: '#FFF3E0',
@@ -421,14 +686,57 @@ const styles = StyleSheet.create({
 
   address: {
     color: '#666',
+    fontSize: 14,
+    lineHeight: 20,
+    flex: 1,
+  },
+  addressRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     marginBottom: 12,
+  },
+  addressIcon: {
+    marginRight: 6,
+    marginTop: 2,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 10,
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  metaText: {
+    fontSize: 13,
+    color: '#666',
+    fontWeight: '500',
+  },
+  metaDivider: {
+    width: 1,
+    height: 14,
+    backgroundColor: '#DDD',
+    marginHorizontal: 8,
   },
 
   pickBtn: {
     backgroundColor: theme.colors.success,
     borderRadius: 14,
-    paddingVertical: 12,
+    paddingVertical: 14,
     alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  pickIcon: {
+    marginRight: 4,
   },
 
   pickText: {
@@ -440,9 +748,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 80,
   },
-
-  emptyIcon: {
-    fontSize: 56,
+  emptyIconContainer: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: '#F5F5F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
   },
 
   emptyTitle: {
@@ -452,8 +765,28 @@ const styles = StyleSheet.create({
   },
 
   emptySub: {
-    color: '#777',
-    marginTop: 6,
+    color: '#999',
+    marginTop: 8,
+    fontSize: 14,
+    textAlign: 'center',
+    paddingHorizontal: 40,
+  },
+  refreshButton: {
+    marginTop: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: '#F0F9F0',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: theme.colors.success,
+  },
+  refreshButtonText: {
+    color: theme.colors.success,
+    fontWeight: '600',
+    fontSize: 15,
   },
 
   error: {

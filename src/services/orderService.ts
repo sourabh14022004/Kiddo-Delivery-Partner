@@ -1,8 +1,7 @@
 import { getFirestore, doc, getDoc, setDoc, runTransaction, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore';
 import { ref, uploadBytes, uploadString, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../config/FirebaseConifg';
-import { addOrderTags } from './shopifyService';
-import { sendNewOrderNotification } from './notificationService';
+import { addOrderTags, updateDeliveryStatusMetafield } from './shopifyService';
 import * as FileSystem from 'expo-file-system';
 
 const ORDERS_COLLECTION = 'orders';
@@ -13,20 +12,25 @@ const RIDERS_COLLECTION = 'deliveryPartners'; // Using the same collection as us
  * Shopify IDs are in format: gid://shopify/Order/6889098707233
  * Firestore doesn't allow "//" in document IDs, so we extract just the numeric part
  */
-export const getSafeOrderId = (shopifyOrderId: string): string => {
-  // If it's already a numeric ID, return it
-  if (/^\d+$/.test(shopifyOrderId)) {
-    return shopifyOrderId;
+export const getSafeOrderId = (shopifyOrderId: string | null | undefined): string => {
+  if (shopifyOrderId == null || typeof shopifyOrderId !== 'string') {
+    throw new Error('Order ID is required');
   }
-  
+  const id = String(shopifyOrderId).trim();
+  if (!id) {
+    throw new Error('Order ID is required');
+  }
+  // If it's already a numeric ID, return it
+  if (/^\d+$/.test(id)) {
+    return id;
+  }
   // Extract numeric ID from GID format: gid://shopify/Order/6889098707233
-  const match = shopifyOrderId.match(/\/(\d+)$/);
+  const match = id.match(/\/(\d+)$/);
   if (match && match[1]) {
     return match[1];
   }
-  
   // Fallback: remove all non-alphanumeric characters except underscores and hyphens
-  return shopifyOrderId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return id.replace(/[^a-zA-Z0-9_-]/g, '_');
 };
 
 export interface OrderAssignmentResult {
@@ -54,7 +58,7 @@ export const assignOrderToRider = async (
     await runTransaction(db, async (transaction) => {
       // Read the order document
       const orderDoc = await transaction.get(orderRef);
-      
+
       if (!orderDoc.exists()) {
         throw new Error('Order not found');
       }
@@ -100,13 +104,18 @@ export const assignOrderToRider = async (
     // Step 2: Update Shopify order tags (non-blocking, but log errors)
     const shopifyTag = `assigned_to_rider_${riderId}`;
     const shopifyResult = await addOrderTags(orderId, [shopifyTag]);
-    
+
     if (!shopifyResult.success) {
       console.warn('Failed to update Shopify tags, but order is assigned in Firebase:', shopifyResult.error);
       // Don't fail the whole operation if Shopify update fails
     } else {
       console.log('Shopify order tags updated successfully');
     }
+
+    // Sync delivery status to Shopify metafield (non-blocking)
+    updateDeliveryStatusMetafield(orderId, "Assigned").catch((err: any) => {
+      console.warn(`Failed to sync delivery status "Assigned" to Shopify for order ${orderId}:`, err);
+    });
 
     console.log(`Order ${orderId} successfully assigned to rider ${riderId}`);
     return {
@@ -133,7 +142,7 @@ export const getRiderActiveOrder = async (riderId: string): Promise<{ success: b
     if (riderDoc.exists()) {
       const riderData = riderDoc.data();
       const activeOrderId = riderData.activeOrderId;
-      
+
       if (activeOrderId) {
         console.log(`Rider ${riderId} has active order: ${activeOrderId}`);
         return {
@@ -215,6 +224,59 @@ export const isOrderAssigned = async (shopifyOrderId: string): Promise<boolean> 
   } catch (error: any) {
     console.error('Error checking order assignment:', error);
     return false; // On error, assume not assigned to avoid hiding orders
+  }
+};
+
+/**
+ * Batch check if multiple orders are assigned (optimized for performance)
+ * Returns a Map of orderId -> boolean (true if assigned)
+ */
+export const batchCheckOrderAssignments = async (
+  shopifyOrderIds: string[]
+): Promise<Map<string, boolean>> => {
+  const assignmentMap = new Map<string, boolean>();
+
+  if (shopifyOrderIds.length === 0) {
+    return assignmentMap;
+  }
+
+  try {
+    // Firestore 'in' queries are limited to 10 items, so we batch them
+    const BATCH_SIZE = 10;
+    const batches: string[][] = [];
+
+    for (let i = 0; i < shopifyOrderIds.length; i += BATCH_SIZE) {
+      batches.push(shopifyOrderIds.slice(i, i + BATCH_SIZE));
+    }
+
+    // Process all batches in parallel
+    const batchResults = await Promise.all(
+      batches.map(async (batch) => {
+        const safeOrderIds = batch.map(getSafeOrderId);
+        const orderRefs = safeOrderIds.map(id => doc(db, ORDERS_COLLECTION, id));
+
+        // Use Promise.all for parallel reads (faster than whereIn query for small batches)
+        const docs = await Promise.all(orderRefs.map(ref => getDoc(ref)));
+
+        return batch.map((shopifyId, index) => {
+          const doc = docs[index];
+          const isAssigned = doc.exists() && !!(doc.data()?.assignedTo);
+          return { shopifyId, isAssigned };
+        });
+      })
+    );
+
+    // Flatten results and populate map
+    batchResults.flat().forEach(({ shopifyId, isAssigned }) => {
+      assignmentMap.set(shopifyId, isAssigned);
+    });
+
+    return assignmentMap;
+  } catch (error: any) {
+    console.error('Error batch checking order assignments:', error);
+    // On error, assume all orders are unassigned to avoid hiding orders
+    shopifyOrderIds.forEach(id => assignmentMap.set(id, false));
+    return assignmentMap;
   }
 };
 
@@ -314,11 +376,11 @@ export const updateOrderStatus = async (
         updatedAt: serverTimestamp(),
         ...(status === 'PICKED_UP' && { pickedUpAt: serverTimestamp() }),
         ...(status === 'IN_TRANSIT' && { inTransitAt: serverTimestamp() }),
-        ...(status === 'DELIVERED' && { 
+        ...(status === 'DELIVERED' && {
           deliveredAt: serverTimestamp(),
           // ...(deliveryImageUrl && { deliveryImageUrl }), // Commented out for now
         }),
-        ...(status === 'RETURNED' && { 
+        ...(status === 'RETURNED' && {
           returnedAt: serverTimestamp(),
         }),
       },
@@ -347,7 +409,9 @@ export const updateOrderStatus = async (
       }
     }
 
-    console.log(`Order ${shopifyOrderId} status updated to ${status}`);
+    // Note: OrderDetailsScreen handles Shopify sync (updateDeliveryStatus) explicitly with user cues.
+    // We avoid duplicate calls here to prevent rate limiting.
+
     return {
       success: true,
     };
@@ -367,19 +431,27 @@ export const updateOrderStatus = async (
  */
 export const syncShopifyOrderToFirestore = async (shopifyOrder: any) => {
   try {
+    const orderIdToSync = shopifyOrder?.id ?? shopifyOrder?.shopifyOrderId;
+    if (!shopifyOrder || orderIdToSync == null || orderIdToSync === '') {
+      return {
+        success: false,
+        error: 'Order ID is required to sync',
+      };
+    }
     // Convert Shopify order ID to safe Firestore document ID
-    const safeOrderId = getSafeOrderId(shopifyOrder.id);
+    const safeOrderId = getSafeOrderId(orderIdToSync);
     const orderRef = doc(db, ORDERS_COLLECTION, safeOrderId);
-    
+
     // Check if order already exists
     const orderDoc = await getDoc(orderRef);
     const isNewOrder = !orderDoc.exists();
-    
+
     const orderData = {
-      shopifyOrderId: shopifyOrder.id,
-      shopifyOrderName: shopifyOrder.name,
+      shopifyOrderId: orderIdToSync,
+      shopifyOrderName: shopifyOrder.name ?? shopifyOrder.shopifyOrderName ?? `#${safeOrderId}`,
       createdAt: shopifyOrder.createdAt,
       updatedAt: serverTimestamp(),
+      cancelledAt: shopifyOrder.cancelledAt || null,
       status: orderDoc.exists() ? orderDoc.data().status || 'PENDING' : 'PENDING',
       assignedTo: orderDoc.exists() ? orderDoc.data().assignedTo || null : null,
       // Store Shopify order data
@@ -393,36 +465,23 @@ export const syncShopifyOrderToFirestore = async (shopifyOrder: any) => {
     };
 
     await setDoc(orderRef, orderData, { merge: true });
-    console.log(`Synced Shopify order ${shopifyOrder.id} to Firestore`);
-    
-    // If it's a new order and not already assigned, send notifications
-    if (isNewOrder && !orderData.assignedTo) {
-      // Only send notifications for unfulfilled orders
-      if (
-        shopifyOrder.displayFulfillmentStatus !== 'FULFILLED' &&
-        shopifyOrder.displayFulfillmentStatus !== 'DELIVERED'
-      ) {
-        const totalPrice = shopifyOrder.totalPriceSet?.shopMoney;
-        const notificationResult = await sendNewOrderNotification({
-          orderId: shopifyOrder.id,
-          orderName: shopifyOrder.name,
-          totalPrice: totalPrice?.amount || '0',
-          currencyCode: totalPrice?.currencyCode || 'USD',
-          shippingAddress: shopifyOrder.shippingAddress || {},
-        }).catch((err) => {
-          console.warn('Failed to send notification for new order:', err);
-          // Don't fail the sync if notification fails
-        });
+    console.log(`Synced Shopify order ${orderIdToSync} to Firestore`);
 
-        if (notificationResult?.success) {
-          console.log(`✅ Sent notifications for new order ${shopifyOrder.id} to ${notificationResult.sentCount} delivery partners`);
-        }
-      }
-    }
-    
+    // Notifications disabled for now (Firestore doc ref fix needed in notificationService)
+    // if (isNewOrder && !orderData.assignedTo) {
+    //   if (
+    //     shopifyOrder.displayFulfillmentStatus !== 'FULFILLED' &&
+    //     shopifyOrder.displayFulfillmentStatus !== 'DELIVERED'
+    //   ) {
+    //     const totalPrice = shopifyOrder.totalPriceSet?.shopMoney;
+    //     const notificationResult = await sendNewOrderNotification({ ... }).catch(...);
+    //     ...
+    //   }
+    // }
+
     return {
       success: true,
-      orderId: shopifyOrder.id,
+      orderId: orderIdToSync,
       isNewOrder,
     };
   } catch (error: any) {

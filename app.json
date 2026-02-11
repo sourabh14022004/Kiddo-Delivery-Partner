@@ -4,23 +4,25 @@
     "slug": "KiddoDeliveryPartner",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/Gemini_Generated_Image_dzo35udzo35udzo3.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "UIBackgroundModes": ["remote-notification"]
+        "UIBackgroundModes": [
+          "remote-notification",
+          "remote-notification"
+        ]
+      },
+      "bundleIdentifier": "com.sourabh-sarkar.KiddoDeliveryPartner",
+      "config": {
+        "googleMapsApiKey": "AIzaSyCr4X4_HW-Fv1-5tC5rSf5iV840WAsVca4"
       }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/Gemini_Generated_Image_dzo35udzo35udzo3.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
@@ -29,17 +31,19 @@
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
-      ]
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCr4X4_HW-Fv1-5tC5rSf5iV840WAsVca4"
+        }
+      }
     },
     "plugins": [
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
-          "color": "#000000",
-          "sounds": [
-            "default"
-          ]
+          "icon": "./assets/Gemini_Generated_Image_dzo35udzo35udzo3.png",
+          "color": "#000000"
         }
       ]
     ],

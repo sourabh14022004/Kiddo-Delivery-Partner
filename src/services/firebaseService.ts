@@ -1,5 +1,6 @@
 import { getFirestore, collection, doc, setDoc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { app } from '../config/FirebaseConifg';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { app, storage } from '../config/FirebaseConifg';
 import { PickerDetails } from '../screens/PickerDetailsScreen';
 
 const db = getFirestore(app);
@@ -23,9 +24,9 @@ export const saveUserDetails = async (
   try {
     // Clean phone number to use as document ID (remove + and spaces)
     const cleanPhoneNumber = phoneNumber.replace(/\D/g, '');
-    
+
     const userRef = doc(db, COLLECTION_NAME, cleanPhoneNumber);
-    
+
     const userData: FirebaseUserData = {
       ...userDetails,
       phoneNumber: cleanPhoneNumber, // Store cleaned phone number
@@ -34,7 +35,7 @@ export const saveUserDetails = async (
 
     // Check if user already exists
     const userDoc = await getDoc(userRef);
-    
+
     if (userDoc.exists()) {
       // Update existing user
       await updateDoc(userRef, userData);
@@ -97,7 +98,7 @@ export const updateLastLogin = async (
   try {
     const cleanPhoneNumber = phoneNumber.replace(/\D/g, '');
     const userRef = doc(db, COLLECTION_NAME, cleanPhoneNumber);
-    
+
     // Use setDoc with merge: true to create document if it doesn't exist
     // This prevents "No document to update" errors
     await setDoc(
@@ -137,3 +138,75 @@ export const checkUserExists = async (
   }
 };
 
+/**
+ * Upload profile image to Firebase Storage
+ * Returns the download URL
+ */
+export const uploadProfileImage = async (
+  userId: string,
+  uri: string
+): Promise<{ success: boolean; downloadUrl?: string; error?: string }> => {
+  try {
+    // strict check for valid string URI
+    if (!uri || typeof uri !== 'string') {
+      return { success: false, error: 'Invalid file URI' };
+    }
+
+    // 1. Create a blob from the URI using XMLHttpRequest (more reliable in RN)
+    const blob: Blob = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.onload = function () {
+        resolve(xhr.response);
+      };
+      xhr.onerror = function (e) {
+        console.error('XHR Error:', e);
+        reject(new TypeError("Network request failed"));
+      };
+      xhr.responseType = "blob";
+      xhr.open("GET", uri, true);
+      xhr.send(null);
+    });
+
+    // 2. Create a reference to the file in Firebase Storage
+    // Path: profile_photos/{userId}/profile.jpg
+    const filename = `profile_photos/${userId}/profile_${Date.now()}.jpg`;
+    const storageRef = ref(storage, filename);
+
+    // 3. Upload the file
+    const uploadTask = uploadBytesResumable(storageRef, blob);
+
+    return new Promise((resolve, reject) => {
+      uploadTask.on(
+        'state_changed',
+        (snapshot) => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          console.log('Upload is ' + progress + '% done');
+        },
+        (error) => {
+          console.error('Upload failed:', error);
+          // @ts-ignore
+          blob.close(); // Clean up blob
+          resolve({ success: false, error: error.message });
+        },
+        async () => {
+          try {
+            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+            console.log('File available at', downloadURL);
+            // @ts-ignore
+            blob.close(); // Clean up blob
+            resolve({ success: true, downloadUrl: downloadURL });
+          } catch (error: any) {
+            console.error('Error getting download URL:', error);
+            // @ts-ignore
+            blob.close();
+            resolve({ success: false, error: error.message });
+          }
+        }
+      );
+    });
+
+  } catch (error: any) {
+    console.error('Error uploading image:', error);
+    return { success: false, error: error.message };
+  }
+};

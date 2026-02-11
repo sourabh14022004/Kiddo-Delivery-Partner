@@ -148,7 +148,7 @@ export const sendNewOrderNotification = async (
   try {
     // Get all notification tokens
     const tokensResult = await getAllNotificationTokens();
-    
+
     if (!tokensResult.success || !tokensResult.tokens || tokensResult.tokens.length === 0) {
       console.warn('No notification tokens found');
       return {
@@ -250,8 +250,8 @@ export const setupNotificationListeners = (
 
   // Return cleanup function
   return () => {
-    Notifications.removeNotificationSubscription(receivedListener);
-    Notifications.removeNotificationSubscription(responseListener);
+    receivedListener.remove();
+    responseListener.remove();
   };
 };
 
@@ -266,7 +266,7 @@ export const initializeNotifications = async (
   try {
     // Register for push notifications
     const tokenResult = await registerForPushNotifications();
-    
+
     if (!tokenResult.success || !tokenResult.token) {
       return {
         success: false,
@@ -276,7 +276,7 @@ export const initializeNotifications = async (
 
     // Save token to Firestore
     const saveResult = await saveNotificationToken(phoneNumber, tokenResult.token);
-    
+
     if (!saveResult.success) {
       console.warn('Failed to save notification token:', saveResult.error);
       // Continue anyway - token registration is still successful

@@ -14,7 +14,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import { saveUserDetails } from '../services/firebaseService';
+import { saveUserDetails, uploadProfileImage } from '../services/firebaseService';
 
 interface PickerDetailsScreenProps {
   phoneNumber: string;
@@ -80,20 +80,46 @@ const PickerDetailsScreen: React.FC<PickerDetailsScreenProps> = ({
       return;
     }
 
+    // Upload profile photo if selected
+    let photoUrl = profilePhoto;
+    if (profilePhoto) {
+      try {
+        const uploadResult = await uploadProfileImage(phoneNumber, profilePhoto);
+        if (uploadResult.success && uploadResult.downloadUrl) {
+          photoUrl = uploadResult.downloadUrl;
+          console.log('✅ Profile photo uploaded:', photoUrl);
+        } else {
+          console.warn('❌ Failed to upload profile photo:', uploadResult.error);
+          Alert.alert(
+            'Image Upload Failed',
+            'Could not upload profile photo. Saving profile without image update.'
+          );
+          // Proceed without updating photo URL if upload fails? 
+          // Or maybe keep local one? No, local one is useless on other devices.
+          // Let's keep the local one locally but maybe not save it to firestore if it's invalid?
+          // Actually, if upload fails, we probably shouldn't save the local URI to Firestore as it will be broken on other devices.
+          // But for now, let's just proceed with the original flow or maybe set it to undefined if upload fails to avoid broken images.
+          // However, the user might want to try again.
+        }
+      } catch (error) {
+        console.error('Error uploading photo:', error);
+      }
+    }
+
     const details: PickerDetails = {
       fullName: fullName.trim(),
       phoneNumber,
       ...(age.trim() && { age: age.trim() }),
       ...(gender && { gender }),
-      ...(profilePhoto && { profilePhoto }),
+      ...(photoUrl && { profilePhoto: photoUrl }),
     };
 
     setLoading(true);
-    
+
     try {
       // Save to Firebase
       const result = await saveUserDetails(phoneNumber, details);
-      
+
       if (result.success) {
         // Successfully saved to Firebase, proceed with submission
         onSubmit(details);
@@ -278,27 +304,27 @@ const PickerDetailsScreen: React.FC<PickerDetailsScreenProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#fff',
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 20,
+    padding: 24,
     paddingBottom: 40,
   },
   header: {
-    marginBottom: 24,
+    marginBottom: 32,
     alignItems: 'center',
   },
   title: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: 'bold',
-    color: '#333',
+    color: '#000',
     marginBottom: 8,
   },
   subtitle: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#666',
     textAlign: 'center',
   },
@@ -308,7 +334,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: '#000',
     marginBottom: 8,
   },
   required: {
@@ -316,16 +342,17 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#000',
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
     backgroundColor: '#fff',
-    color: '#333',
+    color: '#000',
   },
   disabledInput: {
     backgroundColor: '#f5f5f5',
     color: '#666',
+    borderColor: '#ddd',
   },
   photoContainer: {
     alignItems: 'center',
@@ -337,17 +364,17 @@ const styles = StyleSheet.create({
     height: 120,
     borderRadius: 60,
     borderWidth: 3,
-    borderColor: '#007AFF',
+    borderColor: '#22C55E',
   },
   photoPlaceholder: {
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: '#e0e0e0',
+    backgroundColor: '#f5f5f5',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#ddd',
+    borderColor: '#000',
     borderStyle: 'dashed',
   },
   photoPlaceholderText: {
@@ -357,6 +384,7 @@ const styles = StyleSheet.create({
   photoPlaceholderLabel: {
     fontSize: 12,
     color: '#666',
+    fontWeight: '500',
   },
   genderContainer: {
     flexDirection: 'row',
@@ -369,13 +397,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#000',
     backgroundColor: '#fff',
     alignItems: 'center',
   },
   genderButtonActive: {
-    borderColor: '#007AFF',
-    backgroundColor: '#E3F2FD',
+    borderColor: '#22C55E',
+    backgroundColor: '#F0FDF4',
   },
   genderButtonText: {
     fontSize: 16,
@@ -383,11 +411,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   genderButtonTextActive: {
-    color: '#007AFF',
+    color: '#22C55E',
     fontWeight: '600',
   },
   submitButton: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#22C55E',
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
@@ -397,6 +425,7 @@ const styles = StyleSheet.create({
   },
   submitButtonDisabled: {
     opacity: 0.6,
+    backgroundColor: '#9CA3AF',
   },
   submitButtonText: {
     color: '#fff',

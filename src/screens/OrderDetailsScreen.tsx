@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -12,11 +12,14 @@ import {
   Image,
   Platform,
   Dimensions,
+  Animated,
+  PanResponder,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import { getOrderDetails, updateOrderStatus } from "../services/orderService";
+import { getOrderDetails, updateOrderStatus, syncShopifyOrderToFirestore } from "../services/orderService";
 import LoadingScreen from "../components/LoadingScreen";
 import {
   markOrderAsPickedUp,
@@ -24,10 +27,18 @@ import {
   markOrderAsDelivered,
   markCodOrderAsPaid,
   updateDeliveryStatus,
+  getDeliveryStatusFromMetafield,
+  getShopifyOrderById,
+  syncDeliveryStatusFromExistingTags,
 } from "../services/shopifyService";
-import { WAREHOUSE_ADDRESS } from "../config/config";
+import {
+  WAREHOUSE_ADDRESS,
+  DARK_STORE_LOCATION,
+  GOOGLE_MAP_API,
+} from "../config/config";
 import DeliverySuccessScreen from "../components/DeliverySuccessScreen";
 import { theme } from "../config/theme";
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -49,7 +60,83 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
   const [isInProgress, setIsInProgress] = useState(false);
   const [isDelivered, setIsDelivered] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [currentDeliveryStatus, setCurrentDeliveryStatus] = useState<string | null>(null);
   const [showSuccessScreen, setShowSuccessScreen] = useState(false);
+  const [destinationCoords, setDestinationCoords] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
+  const [mapType, setMapType] = useState<"standard" | "satellite">("standard");
+  const mapRef = useRef<MapView>(null);
+  const insets = useSafeAreaInsets();
+  const [isBottomSheetCollapsed, setIsBottomSheetCollapsed] = useState(true); // Start collapsed
+  const [isContactExpanded, setIsContactExpanded] = useState(false); // Contact section collapsed by default
+  const bottomSheetHeight = useRef(
+    new Animated.Value(120) // Start with collapsed height
+  ).current;
+  const dragY = useRef(120);
+
+  const COLLAPSED_HEIGHT = 120; // Reduced height for minimal dropdown
+  const EXPANDED_HEIGHT = SCREEN_HEIGHT * 0.6;
+  const CONTACT_BAR_BOTTOM = 12 + insets.bottom;
+
+  // PanResponder for drawer effect
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        // Only respond to vertical movements
+        return (
+          Math.abs(gestureState.dy) > 5 &&
+          Math.abs(gestureState.dy) > Math.abs(gestureState.dx)
+        );
+      },
+      onPanResponderGrant: () => {
+        // Store current height when drag starts
+        bottomSheetHeight.stopAnimation((value) => {
+          dragY.current = value;
+        });
+      },
+      onPanResponderMove: (_, gestureState) => {
+        // Calculate new height based on drag (dragging down decreases height)
+        const newHeight = dragY.current - gestureState.dy;
+
+        // Clamp between min and max heights
+        const clampedHeight = Math.max(
+          COLLAPSED_HEIGHT,
+          Math.min(EXPANDED_HEIGHT, newHeight)
+        );
+
+        bottomSheetHeight.setValue(clampedHeight);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        const currentHeight = dragY.current - gestureState.dy;
+        const velocity = gestureState.vy;
+
+        // Determine target state based on position and velocity
+        const threshold = (COLLAPSED_HEIGHT + EXPANDED_HEIGHT) / 2;
+        const shouldCollapse =
+          (currentHeight < threshold && Math.abs(velocity) < 0.3) ||
+          velocity > 0.3 ||
+          currentHeight < COLLAPSED_HEIGHT + 80;
+
+        const targetHeight = shouldCollapse
+          ? COLLAPSED_HEIGHT
+          : EXPANDED_HEIGHT;
+        const willBeCollapsed = targetHeight === COLLAPSED_HEIGHT;
+
+        Animated.spring(bottomSheetHeight, {
+          toValue: targetHeight,
+          useNativeDriver: false,
+          tension: 50,
+          friction: 10,
+        }).start();
+
+        setIsBottomSheetCollapsed(willBeCollapsed);
+        dragY.current = targetHeight;
+      },
+    })
+  ).current;
 
   useEffect(() => {
     loadOrderDetails();
@@ -59,19 +146,74 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
     try {
       setLoading(true);
       setError(null);
-      const result = await getOrderDetails(orderId);
+
+      // Step 1: Try to get from Firestore first
+      let result = await getOrderDetails(orderId);
+      let orderData = result.data;
+
+      // Step 2: If not found in Firestore, fetch from Shopify and sync
+      if (!result.success || !result.data) {
+        console.log(`[Order Details] Order not in Firestore, fetching from Shopify: ${orderId}`);
+        const shopifyResult = await getShopifyOrderById(orderId);
+
+        if (shopifyResult.success && shopifyResult.data) {
+          // Sync to Firestore for future use
+          await syncShopifyOrderToFirestore(shopifyResult.data);
+
+          // Fetch again from Firestore now that it's synced
+          result = await getOrderDetails(orderId);
+
+          if (!result.success || !result.data) {
+            setError("Failed to sync order to Firestore");
+            return;
+          }
+          orderData = result.data;
+        } else {
+          setError(shopifyResult.error || "Order not found in Shopify");
+          return;
+        }
+      }
 
       if (result.success && result.data) {
         setOrder(result.data);
-        const orderData = result.data as any;
-        const status = orderData.status || "PENDING";
+        const status = (result.data as any).status || "PENDING";
         setIsPickedUp(
           status === "PICKED_UP" ||
-            status === "IN_TRANSIT" ||
-            status === "DELIVERED"
+          status === "IN_TRANSIT" ||
+          status === "DELIVERED"
         );
         setIsInProgress(status === "IN_TRANSIT" || status === "DELIVERED");
         setIsDelivered(status === "DELIVERED");
+
+        // Geocode customer address for map
+        await geocodeCustomerAddress(result.data);
+
+        // Get current delivery status from Shopify metafield
+        const shopifyOrderId = (result.data as any).shopifyOrderId || orderId;
+        const deliveryStatusResult = await getDeliveryStatusFromMetafield(shopifyOrderId);
+        if (deliveryStatusResult.success && deliveryStatusResult.data?.deliveryStatus) {
+          setCurrentDeliveryStatus(deliveryStatusResult.data.deliveryStatus);
+          console.log(
+            `✅ [Order Details] Current delivery status from Shopify: ${deliveryStatusResult.data.deliveryStatus}`
+          );
+        } else {
+          // If delivery status column is empty, try to sync from tags
+          console.log(
+            `⚠️ [Order Details] Delivery status column is empty, attempting to sync from tags...`
+          );
+          const syncResult = await syncDeliveryStatusFromExistingTags(shopifyOrderId);
+          if (syncResult.success && syncResult.data?.synced && syncResult.data?.status) {
+            setCurrentDeliveryStatus(syncResult.data.status);
+            console.log(
+              `✅ [Order Details] Successfully synced delivery status from tags: ${syncResult.data.status}`
+            );
+          } else {
+            console.warn(
+              `⚠️ [Order Details] Could not sync delivery status from tags:`,
+              syncResult.error || "No delivery status found in tags"
+            );
+          }
+        }
       } else {
         setError(result.error || "Failed to load order details");
       }
@@ -81,6 +223,90 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
     } finally {
       setLoading(false);
     }
+  };
+
+  // Geocode customer address to get coordinates
+  const geocodeCustomerAddress = async (orderData: any) => {
+    try {
+      const shopifyData = orderData.shopifyData || {};
+      const shippingAddress = shopifyData.shippingAddress || {};
+
+      if (!shippingAddress.address1) {
+        console.warn("No shipping address found");
+        return;
+      }
+
+      // Build full address string
+      const addressParts = [
+        shippingAddress.address1,
+        shippingAddress.address2,
+        shippingAddress.city,
+        shippingAddress.province,
+        shippingAddress.zip,
+        shippingAddress.country,
+      ].filter(Boolean);
+
+      const fullAddress = addressParts.join(", ");
+
+      // Use Google Geocoding API
+      const encodedAddress = encodeURIComponent(fullAddress);
+      const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedAddress}&key=${GOOGLE_MAP_API}`;
+
+      const response = await fetch(geocodeUrl);
+      const data = await response.json();
+
+      if (data.status === "OK" && data.results && data.results.length > 0) {
+        const location = data.results[0].geometry.location;
+        const coords = {
+          latitude: location.lat,
+          longitude: location.lng,
+        };
+        setDestinationCoords(coords);
+
+        // Fit map to show both origin and destination
+        if (mapRef.current) {
+          const coordinates = [DARK_STORE_LOCATION, coords];
+          mapRef.current.fitToCoordinates(coordinates, {
+            edgePadding: { top: 100, right: 50, bottom: 300, left: 50 },
+            animated: true,
+          });
+        }
+      } else {
+        console.warn("Geocoding failed:", data.status);
+      }
+    } catch (error) {
+      console.error("Error geocoding address:", error);
+    }
+  };
+
+  // Calculate region for map to show both origin and destination
+  const getMapRegion = () => {
+    const origin = DARK_STORE_LOCATION;
+    const destination = destinationCoords;
+
+    if (!destination) {
+      return {
+        latitude: origin.latitude,
+        longitude: origin.longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      };
+    }
+
+    const minLat = Math.min(origin.latitude, destination.latitude);
+    const maxLat = Math.max(origin.latitude, destination.latitude);
+    const minLng = Math.min(origin.longitude, destination.longitude);
+    const maxLng = Math.max(origin.longitude, destination.longitude);
+
+    const latDelta = (maxLat - minLat) * 1.5;
+    const lngDelta = (maxLng - minLng) * 1.5;
+
+    return {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLng + maxLng) / 2,
+      latitudeDelta: Math.max(latDelta, 0.01),
+      longitudeDelta: Math.max(lngDelta, 0.01),
+    };
   };
 
   const formatDate = (dateString: string | any) => {
@@ -117,55 +343,90 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
         status: newStatus,
       }));
 
-      const shopifyOrderId = (order as any).shopifyOrderId || orderId;
+      // Get Shopify order ID - prefer shopifyOrderId from order, fallback to orderId
+      // shopifyOrderId should be in GID format: gid://shopify/Order/123456789
+      let shopifyOrderId = (order as any).shopifyOrderId;
+      if (!shopifyOrderId) {
+        // If orderId is numeric, convert to GID format
+        if (/^\d+$/.test(orderId)) {
+          shopifyOrderId = `gid://shopify/Order/${orderId}`;
+        } else {
+          shopifyOrderId = orderId;
+        }
+      }
+      console.log(`[Status Update] Updating PICKED_UP for Shopify order: ${shopifyOrderId}`);
+      console.log(`[Status Update] Order object:`, {
+        shopifyOrderId: (order as any).shopifyOrderId,
+        orderId,
+        shopifyOrderName: (order as any).shopifyOrderName
+      });
+
       const shopifyUpdates = value
         ? (async () => {
-            const [deliveryStatusResult, shopifyResult] =
-              await Promise.allSettled([
-                updateDeliveryStatus(shopifyOrderId, "PICKED_UP"),
-                markOrderAsPickedUp(shopifyOrderId),
-              ]);
+          const [deliveryStatusResult, shopifyResult] =
+            await Promise.allSettled([
+              updateDeliveryStatus(shopifyOrderId, "PICKED_UP"),
+              markOrderAsPickedUp(shopifyOrderId),
+            ]);
 
-            const errors: string[] = [];
-            if (
-              deliveryStatusResult.status === "rejected" ||
-              (deliveryStatusResult.status === "fulfilled" &&
-                !deliveryStatusResult.value.success)
-            ) {
-              errors.push(
-                `Delivery status: ${
-                  deliveryStatusResult.status === "rejected"
-                    ? deliveryStatusResult.reason
-                    : deliveryStatusResult.value.error
-                }`
-              );
-            }
-            if (
-              shopifyResult.status === "rejected" ||
-              (shopifyResult.status === "fulfilled" &&
-                !shopifyResult.value.success)
-            ) {
-              errors.push(
-                `Tag: ${
-                  shopifyResult.status === "rejected"
-                    ? shopifyResult.reason
-                    : shopifyResult.value.error
-                }`
-              );
-            }
+          const errors: string[] = [];
+          if (
+            deliveryStatusResult.status === "rejected" ||
+            (deliveryStatusResult.status === "fulfilled" &&
+              !deliveryStatusResult.value.success)
+          ) {
+            const errorMsg = deliveryStatusResult.status === "rejected"
+              ? deliveryStatusResult.reason?.message || String(deliveryStatusResult.reason)
+              : deliveryStatusResult.value.error || "Unknown error";
+            errors.push(`Delivery status: ${errorMsg}`);
+            console.error(`[Shopify Update] Failed to update delivery status:`, errorMsg);
+          } else if (deliveryStatusResult.status === "fulfilled" && deliveryStatusResult.value.success) {
+            console.log(`[Shopify Update] ✅ Successfully updated delivery status to PICKED_UP`);
+          }
 
-            if (errors.length > 0) {
-              console.warn("Some Shopify updates failed:", errors);
-            }
-            return { errors };
-          })()
-        : Promise.resolve({ errors: [] });
+          if (
+            shopifyResult.status === "rejected" ||
+            (shopifyResult.status === "fulfilled" &&
+              !shopifyResult.value.success)
+          ) {
+            const errorMsg = shopifyResult.status === "rejected"
+              ? shopifyResult.reason?.message || String(shopifyResult.reason)
+              : shopifyResult.value.error || "Unknown error";
+            errors.push(`Tag: ${errorMsg}`);
+            console.error(`[Shopify Update] Failed to update order tag:`, errorMsg);
+          } else if (shopifyResult.status === "fulfilled" && shopifyResult.value.success) {
+            console.log(`[Shopify Update] ✅ Successfully updated order tag`);
+          }
+
+          if (errors.length > 0) {
+            console.warn("[Shopify Update] Some Shopify updates failed:", errors);
+            Alert.alert(
+              "Shopify Update Warning",
+              `Some updates failed:\n${errors.join("\n")}\n\nOrder status updated locally.`
+            );
+          }
+          return { errors, success: errors.length === 0 };
+        })()
+        : Promise.resolve({ errors: [], success: true });
 
       const firestoreUpdate = updateOrderStatus(orderId, newStatus);
       const [shopifyResult, firestoreResult] = await Promise.allSettled([
         shopifyUpdates,
         firestoreUpdate,
       ]);
+
+      // Refresh delivery status from Shopify after update
+      try {
+        const deliveryStatusResult = await getDeliveryStatusFromMetafield(shopifyOrderId);
+        if (deliveryStatusResult.success && deliveryStatusResult.data) {
+          setCurrentDeliveryStatus(deliveryStatusResult.data.deliveryStatus);
+          console.log(
+            `✅ [Order Details] Refreshed delivery status: ${deliveryStatusResult.data.deliveryStatus || "Not set"}`
+          );
+        }
+      } catch (err) {
+        console.warn("Failed to refresh delivery status:", err);
+      }
 
       if (
         firestoreResult.status === "rejected" ||
@@ -223,55 +484,90 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
         status: newStatus,
       }));
 
-      const shopifyOrderId = (order as any).shopifyOrderId || orderId;
+      // Get Shopify order ID - prefer shopifyOrderId from order, fallback to orderId
+      // shopifyOrderId should be in GID format: gid://shopify/Order/123456789
+      let shopifyOrderId = (order as any).shopifyOrderId;
+      if (!shopifyOrderId) {
+        // If orderId is numeric, convert to GID format
+        if (/^\d+$/.test(orderId)) {
+          shopifyOrderId = `gid://shopify/Order/${orderId}`;
+        } else {
+          shopifyOrderId = orderId;
+        }
+      }
+      console.log(`[Status Update] Updating IN_TRANSIT for Shopify order: ${shopifyOrderId}`);
+      console.log(`[Status Update] Order object:`, {
+        shopifyOrderId: (order as any).shopifyOrderId,
+        orderId,
+        shopifyOrderName: (order as any).shopifyOrderName
+      });
+
       const shopifyUpdates = value
         ? (async () => {
-            const [deliveryStatusResult, shopifyResult] =
-              await Promise.allSettled([
-                updateDeliveryStatus(shopifyOrderId, "IN_TRANSIT"),
-                markOrderAsInProgress(shopifyOrderId),
-              ]);
+          const [deliveryStatusResult, shopifyResult] =
+            await Promise.allSettled([
+              updateDeliveryStatus(shopifyOrderId, "IN_TRANSIT"),
+              markOrderAsInProgress(shopifyOrderId),
+            ]);
 
-            const errors: string[] = [];
-            if (
-              deliveryStatusResult.status === "rejected" ||
-              (deliveryStatusResult.status === "fulfilled" &&
-                !deliveryStatusResult.value.success)
-            ) {
-              errors.push(
-                `Delivery status: ${
-                  deliveryStatusResult.status === "rejected"
-                    ? deliveryStatusResult.reason
-                    : deliveryStatusResult.value.error
-                }`
-              );
-            }
-            if (
-              shopifyResult.status === "rejected" ||
-              (shopifyResult.status === "fulfilled" &&
-                !shopifyResult.value.success)
-            ) {
-              errors.push(
-                `Tag: ${
-                  shopifyResult.status === "rejected"
-                    ? shopifyResult.reason
-                    : shopifyResult.value.error
-                }`
-              );
-            }
+          const errors: string[] = [];
+          if (
+            deliveryStatusResult.status === "rejected" ||
+            (deliveryStatusResult.status === "fulfilled" &&
+              !deliveryStatusResult.value.success)
+          ) {
+            const errorMsg = deliveryStatusResult.status === "rejected"
+              ? deliveryStatusResult.reason?.message || String(deliveryStatusResult.reason)
+              : deliveryStatusResult.value.error || "Unknown error";
+            errors.push(`Delivery status: ${errorMsg}`);
+            console.error(`[Shopify Update] Failed to update delivery status:`, errorMsg);
+          } else if (deliveryStatusResult.status === "fulfilled" && deliveryStatusResult.value.success) {
+            console.log(`[Shopify Update] ✅ Successfully updated delivery status to IN_TRANSIT`);
+          }
 
-            if (errors.length > 0) {
-              console.warn("Some Shopify updates failed:", errors);
-            }
-            return { errors };
-          })()
-        : Promise.resolve({ errors: [] });
+          if (
+            shopifyResult.status === "rejected" ||
+            (shopifyResult.status === "fulfilled" &&
+              !shopifyResult.value.success)
+          ) {
+            const errorMsg = shopifyResult.status === "rejected"
+              ? shopifyResult.reason?.message || String(shopifyResult.reason)
+              : shopifyResult.value.error || "Unknown error";
+            errors.push(`Tag: ${errorMsg}`);
+            console.error(`[Shopify Update] Failed to update order tag:`, errorMsg);
+          } else if (shopifyResult.status === "fulfilled" && shopifyResult.value.success) {
+            console.log(`[Shopify Update] ✅ Successfully updated order tag`);
+          }
+
+          if (errors.length > 0) {
+            console.warn("[Shopify Update] Some Shopify updates failed:", errors);
+            Alert.alert(
+              "Shopify Update Warning",
+              `Some updates failed:\n${errors.join("\n")}\n\nOrder status updated locally.`
+            );
+          }
+          return { errors, success: errors.length === 0 };
+        })()
+        : Promise.resolve({ errors: [], success: true });
 
       const firestoreUpdate = updateOrderStatus(orderId, newStatus);
       const [shopifyResult, firestoreResult] = await Promise.allSettled([
         shopifyUpdates,
         firestoreUpdate,
       ]);
+
+      // Refresh delivery status from Shopify after update
+      try {
+        const deliveryStatusResult = await getDeliveryStatusFromMetafield(shopifyOrderId);
+        if (deliveryStatusResult.success && deliveryStatusResult.data) {
+          setCurrentDeliveryStatus(deliveryStatusResult.data.deliveryStatus);
+          console.log(
+            `✅ [Order Details] Refreshed delivery status: ${deliveryStatusResult.data.deliveryStatus || "Not set"}`
+          );
+        }
+      } catch (err) {
+        console.warn("Failed to refresh delivery status:", err);
+      }
 
       if (
         firestoreResult.status === "rejected" ||
@@ -297,11 +593,9 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
       if (value) {
         const shippingAddress = order.shopifyData?.shippingAddress;
         if (shippingAddress?.address1) {
-          const fullAddress = `${shippingAddress.address1}, ${
-            shippingAddress.city || ""
-          } ${shippingAddress.province || ""} ${
-            shippingAddress.zip || ""
-          }`.trim();
+          const fullAddress = `${shippingAddress.address1}, ${shippingAddress.city || ""
+            } ${shippingAddress.province || ""} ${shippingAddress.zip || ""
+            }`.trim();
           openMaps(fullAddress);
         }
       }
@@ -339,76 +633,85 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
         status: newStatus,
       }));
 
+      // Get Shopify order ID - prefer shopifyOrderId from order, fallback to orderId
       const shopifyOrderId = (order as any).shopifyOrderId || orderId;
+      console.log(`[Status Update] Updating DELIVERED for Shopify order: ${shopifyOrderId}`);
+
       const shopifyUpdates = value
         ? (async () => {
-            const updateErrors: string[] = [];
+          const updateErrors: string[] = [];
 
-            const [deliveryStatusResult, shopifyTagResult, paidResult] =
-              await Promise.allSettled([
-                updateDeliveryStatus(shopifyOrderId, "DELIVERED"),
-                markOrderAsDelivered(shopifyOrderId),
-                (async () => {
-                  const financialStatus =
-                    order.shopifyData?.displayFinancialStatus;
-                  if (
-                    financialStatus &&
-                    financialStatus !== "PAID" &&
-                    financialStatus !== "AUTHORIZED"
-                  ) {
-                    return await markCodOrderAsPaid(shopifyOrderId);
-                  }
-                  return { success: true };
-                })(),
-              ]);
+          const [deliveryStatusResult, shopifyTagResult, paidResult] =
+            await Promise.allSettled([
+              updateDeliveryStatus(shopifyOrderId, "DELIVERED"),
+              markOrderAsDelivered(shopifyOrderId),
+              (async () => {
+                const financialStatus =
+                  order.shopifyData?.displayFinancialStatus;
+                if (
+                  financialStatus &&
+                  financialStatus !== "PAID" &&
+                  financialStatus !== "AUTHORIZED"
+                ) {
+                  return await markCodOrderAsPaid(shopifyOrderId);
+                }
+                return { success: true };
+              })(),
+            ]);
 
-            if (
-              deliveryStatusResult.status === "rejected" ||
-              (deliveryStatusResult.status === "fulfilled" &&
-                !deliveryStatusResult.value.success)
-            ) {
-              updateErrors.push(
-                `Delivery status: ${
-                  deliveryStatusResult.status === "rejected"
-                    ? deliveryStatusResult.reason
-                    : deliveryStatusResult.value.error
-                }`
-              );
-            }
+          if (
+            deliveryStatusResult.status === "rejected" ||
+            (deliveryStatusResult.status === "fulfilled" &&
+              !deliveryStatusResult.value.success)
+          ) {
+            const errorMsg = deliveryStatusResult.status === "rejected"
+              ? deliveryStatusResult.reason?.message || String(deliveryStatusResult.reason)
+              : deliveryStatusResult.value.error || "Unknown error";
+            updateErrors.push(`Delivery status: ${errorMsg}`);
+            console.error(`[Shopify Update] Failed to update delivery status:`, errorMsg);
+          } else if (deliveryStatusResult.status === "fulfilled" && deliveryStatusResult.value.success) {
+            console.log(`[Shopify Update] ✅ Successfully updated delivery status to DELIVERED`);
+          }
 
-            if (
-              shopifyTagResult.status === "rejected" ||
-              (shopifyTagResult.status === "fulfilled" &&
-                !shopifyTagResult.value.success)
-            ) {
-              updateErrors.push(
-                `Tag: ${
-                  shopifyTagResult.status === "rejected"
-                    ? shopifyTagResult.reason
-                    : shopifyTagResult.value.error
-                }`
-              );
-            }
+          if (
+            shopifyTagResult.status === "rejected" ||
+            (shopifyTagResult.status === "fulfilled" &&
+              !shopifyTagResult.value.success)
+          ) {
+            const errorMsg = shopifyTagResult.status === "rejected"
+              ? shopifyTagResult.reason?.message || String(shopifyTagResult.reason)
+              : shopifyTagResult.value.error || "Unknown error";
+            updateErrors.push(`Tag: ${errorMsg}`);
+            console.error(`[Shopify Update] Failed to update order tag:`, errorMsg);
+          } else if (shopifyTagResult.status === "fulfilled" && shopifyTagResult.value.success) {
+            console.log(`[Shopify Update] ✅ Successfully updated order tag`);
+          }
 
-            if (
-              paidResult.status === "rejected" ||
-              (paidResult.status === "fulfilled" && !paidResult.value.success)
-            ) {
-              updateErrors.push(
-                `Payment: ${
-                  paidResult.status === "rejected"
-                    ? paidResult.reason
-                    : paidResult.value.error
-                }`
-              );
-            }
+          if (
+            paidResult.status === "rejected" ||
+            (paidResult.status === "fulfilled" && !paidResult.value.success)
+          ) {
+            const errorMsg = paidResult.status === "rejected"
+              ? paidResult.reason?.message || String(paidResult.reason)
+              : paidResult.value.error || "Unknown error";
+            updateErrors.push(`Payment: ${errorMsg}`);
+            console.error(`[Shopify Update] Failed to mark COD as paid:`, errorMsg);
+          } else if (paidResult.status === "fulfilled" && paidResult.value.success) {
+            console.log(`[Shopify Update] ✅ Successfully marked COD as paid`);
+          }
 
-            if (updateErrors.length > 0) {
-              console.warn("Some Shopify updates failed:", updateErrors);
-            }
+          if (updateErrors.length > 0) {
+            console.warn("[Shopify Update] Some Shopify updates failed:", updateErrors);
+            Alert.alert(
+              "Shopify Update Warning",
+              `Some updates failed:\n${updateErrors.join("\n")}\n\nOrder status updated locally.`
+            );
+          } else {
+            console.log(`[Shopify Update] ✅ All Shopify updates completed successfully`);
+          }
 
-            return { errors: updateErrors };
-          })()
+          return { errors: updateErrors };
+        })()
         : Promise.resolve({ errors: [] });
 
       const firestoreUpdate = updateOrderStatus(orderId, newStatus);
@@ -416,6 +719,19 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
         shopifyUpdates,
         firestoreUpdate,
       ]);
+
+      // Refresh delivery status from Shopify after update
+      try {
+        const deliveryStatusResult = await getDeliveryStatusFromMetafield(shopifyOrderId);
+        if (deliveryStatusResult.success && deliveryStatusResult.data) {
+          setCurrentDeliveryStatus(deliveryStatusResult.data.deliveryStatus);
+          console.log(
+            `✅ [Order Details] Refreshed delivery status: ${deliveryStatusResult.data.deliveryStatus || "Not set"}`
+          );
+        }
+      } catch (err) {
+        console.warn("Failed to refresh delivery status:", err);
+      }
 
       if (
         firestoreResult.status === "rejected" ||
@@ -525,8 +841,10 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
     shopifyData.totalPrice?.shopMoney ||
     {};
 
+  // Get customer phone number
+  const customerPhone = shippingAddress?.phone;
+
   const handleCallCustomer = () => {
-    const customerPhone = shippingAddress?.phone;
     if (!customerPhone) {
       Alert.alert("Error", "Customer phone number is not available");
       return;
@@ -542,6 +860,30 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
         "Error",
         "Unable to make phone call. Please check if your device supports phone calls."
       );
+    });
+  };
+
+  const toggleBottomSheet = () => {
+    const toValue = isBottomSheetCollapsed ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT;
+
+    Animated.spring(bottomSheetHeight, {
+      toValue,
+      useNativeDriver: false,
+      tension: 50,
+      friction: 10,
+    }).start();
+
+    setIsBottomSheetCollapsed(!isBottomSheetCollapsed);
+    dragY.current = toValue;
+  };
+
+  const toggleContactExpansion = () => {
+    setIsContactExpanded(!isContactExpanded);
+  };
+
+  const handleMessage = (phoneNumber: string) => {
+    Linking.openURL(`sms:${phoneNumber}`).catch(() => {
+      Alert.alert('Error', 'Unable to open messaging app');
     });
   };
 
@@ -582,11 +924,10 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
   const estimatedDate = new Date(createdDate);
   estimatedDate.setDate(estimatedDate.getDate() + 1);
 
-  // Get customer name
-  const customerName =
-    shippingAddress.firstName && shippingAddress.lastName
-      ? `${shippingAddress.firstName} ${shippingAddress.lastName}`
-      : shippingAddress.firstName || "Customer";
+  // Get customer name (support both camelCase and REST API snake_case)
+  const firstName = shippingAddress.firstName ?? (shippingAddress as any).first_name ?? "";
+  const lastName = shippingAddress.lastName ?? (shippingAddress as any).last_name ?? "";
+  const customerName = [firstName, lastName].filter(Boolean).join(" ").trim() || "Customer";
 
   // Calculate total quantity and weight (placeholder)
   const totalQuantity = lineItems.reduce(
@@ -614,233 +955,391 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
     <SafeAreaView style={styles.container} edges={["top"]}>
       <StatusBar style="light" />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={onBack} style={styles.headerButton}>
-          <Text style={styles.headerButtonIcon}>←</Text>
+      {/* Top Header with Back Button and Map Type Selector - Over map */}
+      <View style={[styles.topHeader, { top: insets.top + 12 }]}>
+        <TouchableOpacity onPress={onBack} style={styles.backButtonHeader}>
+          <Text style={styles.backButtonIcon}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Location Tracking</Text>
-        <TouchableOpacity
-          style={styles.headerCallButton}
-          onPress={handleCallCustomer}
-        >
-          <Text style={styles.headerCallButtonIcon}>📞</Text>
-        </TouchableOpacity>
+
+        <View style={styles.mapTypeSelector}>
+          <TouchableOpacity
+            style={[
+              styles.mapTypeButton,
+              mapType === "standard" && styles.mapTypeButtonActive,
+            ]}
+            onPress={() => setMapType("standard")}
+          >
+            <Text
+              style={[
+                styles.mapTypeButtonText,
+                mapType === "standard" && styles.mapTypeButtonTextActive,
+              ]}
+            >
+              Map
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.mapTypeButton,
+              mapType === "satellite" && styles.mapTypeButtonActive,
+            ]}
+            onPress={() => setMapType("satellite")}
+          >
+            <Text
+              style={[
+                styles.mapTypeButtonText,
+                mapType === "satellite" && styles.mapTypeButtonTextActive,
+              ]}
+            >
+              Satellite
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Map View */}
       <View style={styles.mapContainer}>
-        <View style={styles.mapPlaceholder}>
-          {/* Route line */}
-          <View style={styles.routeLine} />
+        <MapView
+          ref={mapRef}
+          provider={PROVIDER_GOOGLE}
+          style={styles.map}
+          initialRegion={getMapRegion()}
+          mapType={mapType}
+          showsUserLocation={false}
+          showsMyLocationButton={false}
+          showsCompass={false}
+          showsScale={false}
+          toolbarEnabled={false}
+          onMapReady={() => {
+            if (destinationCoords && mapRef.current) {
+              const coordinates = [DARK_STORE_LOCATION, destinationCoords];
+              mapRef.current.fitToCoordinates(coordinates, {
+                edgePadding: { top: 100, right: 50, bottom: 300, left: 50 },
+                animated: true,
+              });
+            }
+          }}
+        >
+          {/* Origin Marker (Warehouse) */}
+          <Marker
+            coordinate={DARK_STORE_LOCATION}
+            title="Warehouse"
+            description="Pickup Location"
+            pinColor={theme.colors.success}
+          >
+            <View style={styles.markerContainer}>
+              <View style={[styles.markerCircle, { backgroundColor: theme.colors.success }]}>
+                <Text style={styles.markerEmoji}>🏠</Text>
+              </View>
+            </View>
+          </Marker>
 
-          {/* Origin marker */}
-          <View style={[styles.marker, styles.originMarker]}>
-            <Text style={styles.markerIcon}>🏠</Text>
-          </View>
+          {/* Destination Marker (Customer) */}
+          {destinationCoords && (
+            <>
+              <Marker
+                coordinate={destinationCoords}
+                title="Delivery Address"
+                description={order?.shopifyData?.shippingAddress?.address1 || "Customer Location"}
+                pinColor="#FF6B35"
+              >
+                <View style={styles.markerContainer}>
+                  <View style={[styles.markerCircle, { backgroundColor: "#FF6B35" }]}>
+                    <Text style={styles.markerEmoji}>📍</Text>
+                  </View>
+                </View>
+              </Marker>
 
-          {/* Current location marker */}
-          <View style={[styles.marker, styles.currentLocationMarker]}>
-            <Text style={styles.navigationIcon}>↑</Text>
-          </View>
-
-          {/* Destination marker */}
-          <View style={[styles.marker, styles.destinationMarker]}>
-            <Text style={styles.markerIcon}>📍</Text>
-          </View>
-        </View>
+              {/* Route Line */}
+              <Polyline
+                coordinates={[DARK_STORE_LOCATION, destinationCoords]}
+                strokeColor={theme.colors.success}
+                strokeWidth={4}
+                lineDashPattern={[]}
+              />
+            </>
+          )}
+        </MapView>
       </View>
 
       {/* Bottom Sheet */}
-      <View style={styles.bottomSheet}>
-        {/* Grab Handle */}
-        <View style={styles.grabHandle} />
-
-        <ScrollView
-          style={styles.bottomSheetContent}
-          showsVerticalScrollIndicator={false}
+      <Animated.View
+        style={[
+          styles.bottomSheet,
+          {
+            height: bottomSheetHeight,
+            maxHeight: bottomSheetHeight,
+          },
+        ]}
+      >
+        {/* Handle bar - always visible; draggable when expanded */}
+        <View
+          style={styles.grabHandleContainer}
+          {...(isBottomSheetCollapsed ? {} : panResponder.panHandlers)}
         >
-          {/* Booking ID and Status */}
-          <View style={styles.bookingRow}>
-            <View style={styles.bookingIdSection}>
-              <Text style={styles.bookingLabel}>Booking Id:</Text>
-              <Text style={styles.bookingId}>
-                {order.shopifyOrderName || orderId}
-              </Text>
-            </View>
-            <View style={styles.statusSection}>
-              <Text style={styles.statusLabel}>Status</Text>
-              <View style={styles.statusBadge}>
-                <Text style={styles.statusBadgeText}>{getStatusDisplay()}</Text>
+          <TouchableOpacity
+            onPress={toggleBottomSheet}
+            activeOpacity={0.8}
+            style={styles.grabHandleTouchable}
+          >
+            <View style={styles.grabHandle} />
+          </TouchableOpacity>
+        </View>
+
+        {isBottomSheetCollapsed ? (
+          // Collapsed View - Minimal Content (Dropdown)
+          <TouchableOpacity
+            style={styles.collapsedContent}
+            onPress={toggleBottomSheet}
+            activeOpacity={0.8}
+          >
+            <View style={styles.collapsedRow}>
+              <View style={styles.collapsedLeft}>
+                <Text style={styles.collapsedBookingId}>
+                  {order.shopifyOrderName || orderId}
+                </Text>
+                <Text style={styles.collapsedCustomer} numberOfLines={1}>
+                  {customerName || "Customer"}
+                </Text>
+              </View>
+              <View style={styles.collapsedRight}>
+                <View style={styles.statusBadge}>
+                  <Text style={styles.statusBadgeText}>
+                    {getStatusDisplay()}
+                  </Text>
+                </View>
+                <Text style={styles.expandHint}>Tap to expand ↓</Text>
               </View>
             </View>
-          </View>
+          </TouchableOpacity>
+        ) : (
+          // Expanded View - Full Content
+          <ScrollView
+            style={styles.bottomSheetContent}
+            contentContainerStyle={styles.bottomSheetContentContainer}
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled={true}
+            bounces={true}
+          >
+            {/* Booking ID and Status */}
+            <View style={styles.bookingRow}>
+              <View style={styles.bookingIdSection}>
+                <Text style={styles.bookingLabel}>Booking Id:</Text>
+                <Text style={styles.bookingId}>
+                  {order.shopifyOrderName || orderId}
+                </Text>
+              </View>
+              <View style={styles.statusSection}>
+                <Text style={styles.statusLabel}>Status</Text>
+                <View style={styles.statusBadge}>
+                  <Text style={styles.statusBadgeText}>
+                    {getStatusDisplay()}
+                  </Text>
+                </View>
+              </View>
+            </View>
 
-          {/* Progress Indicator with Circular Buttons */}
-          <View style={styles.progressWrapper}>
-            <View style={styles.progressContainer}>
-              {progressSteps.map((step, index) => (
-                <React.Fragment key={index}>
-                  <View style={styles.progressStep}>
-                    <TouchableOpacity
-                      style={[
-                        styles.progressCircle,
-                        step.completed && styles.progressCircleCompleted,
-                      ]}
-                      onPress={() => {
-                        if (index === 1 && !updatingStatus) {
-                          handlePickedUpToggle(!isPickedUp);
-                        } else if (
-                          index === 2 &&
-                          !updatingStatus &&
-                          (isPickedUp || isInProgress)
-                        ) {
-                          handleInProgressToggle(!isInProgress);
-                        } else if (
-                          index === 3 &&
-                          !updatingStatus &&
-                          (isInProgress || isDelivered)
-                        ) {
-                          handleDeliveredToggle(!isDelivered);
+            {/* Current Delivery Status from Shopify Metafield */}
+            {currentDeliveryStatus && (
+              <View style={styles.deliveryStatusRow}>
+                <Text style={styles.deliveryStatusLabel}>
+                  Shopify Delivery Status:
+                </Text>
+                <View style={styles.deliveryStatusBadge}>
+                  <Text style={styles.deliveryStatusText}>
+                    {currentDeliveryStatus}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Progress Indicator with Circular Buttons */}
+            <View style={styles.progressWrapper}>
+              <View style={styles.progressContainer}>
+                {progressSteps.map((step, index) => (
+                  <React.Fragment key={index}>
+                    <View style={styles.progressStep}>
+                      <TouchableOpacity
+                        style={[
+                          styles.progressCircle,
+                          step.completed && styles.progressCircleCompleted,
+                        ]}
+                        onPress={() => {
+                          if (index === 1 && !updatingStatus) {
+                            handlePickedUpToggle(!isPickedUp);
+                          } else if (
+                            index === 2 &&
+                            !updatingStatus &&
+                            (isPickedUp || isInProgress)
+                          ) {
+                            handleInProgressToggle(!isInProgress);
+                          } else if (
+                            index === 3 &&
+                            !updatingStatus &&
+                            (isInProgress || isDelivered)
+                          ) {
+                            handleDeliveredToggle(!isDelivered);
+                          }
+                        }}
+                        disabled={
+                          updatingStatus ||
+                          (index === 2 && !isPickedUp && !isInProgress) ||
+                          (index === 3 && !isInProgress && !isDelivered)
                         }
-                      }}
-                      disabled={
-                        updatingStatus ||
-                        (index === 2 && !isPickedUp && !isInProgress) ||
-                        (index === 3 && !isInProgress && !isDelivered)
-                      }
-                      activeOpacity={0.7}
-                    >
-                      {step.completed && (
-                        <Text style={styles.progressCheck}>✓</Text>
-                      )}
-                    </TouchableOpacity>
-                    {/* Progress Label below each circle */}
-                    <Text style={[
-                      styles.progressLabel,
-                      step.completed && styles.progressLabelCompleted
-                    ]} numberOfLines={1}>
-                      {index === 0 ? 'Assigned' : index === 1 ? 'Picked Up' : index === 2 ? 'In Progress' : 'Delivered'}
-                    </Text>
-                  </View>
-                  {index < progressSteps.length - 1 && (
-                    <View
-                      style={[
-                        styles.progressConnector,
-                        step.completed && styles.progressConnectorCompleted,
-                      ]}
-                    />
-                  )}
-                </React.Fragment>
-              ))}
+                        activeOpacity={0.7}
+                      >
+                        {step.completed && (
+                          <Text style={styles.progressCheck}>✓</Text>
+                        )}
+                      </TouchableOpacity>
+                      {/* Progress Label below each circle */}
+                      <Text
+                        style={[
+                          styles.progressLabel,
+                          step.completed && styles.progressLabelCompleted,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {index === 0
+                          ? "Assigned"
+                          : index === 1
+                            ? "Picked Up"
+                            : index === 2
+                              ? "In Progress"
+                              : "Delivered"}
+                      </Text>
+                    </View>
+                    {index < progressSteps.length - 1 && (
+                      <View
+                        style={[
+                          styles.progressConnector,
+                          step.completed && styles.progressConnectorCompleted,
+                        ]}
+                      />
+                    )}
+                  </React.Fragment>
+                ))}
+              </View>
             </View>
-          </View>
 
-          {/* Dates and Locations */}
-          <View style={styles.datesRow}>
-            <View style={styles.dateSectionLeft}>
-              <Text style={styles.dateLabel}>
-                Created, {formatDate(order.createdAt)}
-              </Text>
-              <Text style={styles.locationTextLeft}>{fromLocation}</Text>
-            </View>
-            <View style={styles.dateSectionRight}>
-              <Text style={styles.dateLabelRight}>
-                Estimated, {formatDate(estimatedDate.toISOString())}
-              </Text>
-              <Text style={styles.locationTextRight}>{toLocation}</Text>
-            </View>
-          </View>
+            <View style={styles.progressSeparator} />
 
-          {/* From/To Details with Package */}
-          <View style={styles.detailsRow}>
-            <View style={styles.detailsLeft}>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>From</Text>
-                <Text style={styles.detailValue}>{fromLocation}</Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Customer</Text>
-                <Text style={styles.detailValue}>{customerName}</Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Quantity</Text>
-                <Text style={styles.detailValue}>
-                  {totalQuantity} Box{totalQuantity !== 1 ? "es" : ""}
+            {/* Dates and Locations */}
+            <View style={styles.datesRow}>
+              <View style={styles.dateSectionLeft}>
+                <Text style={styles.dateLabel}>
+                  Created, {formatDate(order.createdAt)}
                 </Text>
+                <Text style={styles.locationTextLeft}>{fromLocation}</Text>
+              </View>
+              <View style={styles.dateSectionRight}>
+                <Text style={styles.dateLabelRight}>
+                  Estimated, {formatDate(estimatedDate.toISOString())}
+                </Text>
+                <Text style={styles.locationTextRight}>{toLocation}</Text>
               </View>
             </View>
-            <View style={styles.detailsRight}>
-              <View style={styles.detailItemRight}>
-                <Text style={[styles.detailLabel, styles.detailLabelRight]}>
-                  To
-                </Text>
-                <Text style={[styles.detailValue, styles.detailValueRight]}>
-                  {toLocation}
-                </Text>
+
+            {/* From/To Details with Package */}
+            <View style={styles.detailsRow}>
+              <View style={styles.detailsLeft}>
+                <View style={styles.detailItem}>
+                  <Text style={styles.detailLabel}>From</Text>
+                  <Text style={styles.detailValue}>{fromLocation}</Text>
+                </View>
+                <View style={styles.detailItem}>
+                  <Text style={styles.detailLabel}>Customer</Text>
+                  <Text style={styles.detailValue}>{customerName}</Text>
+                </View>
+                <View style={styles.detailItem}>
+                  <Text style={styles.detailLabel}>Quantity</Text>
+                  <Text style={styles.detailValue}>
+                    {totalQuantity} Box{totalQuantity !== 1 ? "es" : ""}
+                  </Text>
+                </View>
               </View>
-              <View style={styles.detailItemRight}>
-                <Text style={[styles.detailLabel, styles.detailLabelRight]}>
-                  Order Cost
-                </Text>
-                <Text style={[styles.detailValue, styles.detailValueRight]}>
-                  {totalPrice.amount
-                    ? formatPrice(
+              <View style={styles.detailsRight}>
+                <View style={styles.detailItemRight}>
+                  <Text style={[styles.detailLabel, styles.detailLabelRight]}>
+                    To
+                  </Text>
+                  <Text style={[styles.detailValue, styles.detailValueRight]}>
+                    {toLocation}
+                  </Text>
+                </View>
+                <View style={styles.detailItemRight}>
+                  <Text style={[styles.detailLabel, styles.detailLabelRight]}>
+                    Order Cost
+                  </Text>
+                  <Text style={[styles.detailValue, styles.detailValueRight]}>
+                    {totalPrice.amount
+                      ? formatPrice(
                         totalPrice.amount,
                         totalPrice.currencyCode || "$"
                       )
-                    : "N/A"}
-                </Text>
+                      : "N/A"}
+                  </Text>
+                </View>
+                <View style={styles.detailItemRight}>
+                  <Text style={[styles.detailLabel, styles.detailLabelRight]}>
+                    Weight
+                  </Text>
+                  <Text style={[styles.detailValue, styles.detailValueRight]}>
+                    {totalWeight}
+                  </Text>
+                </View>
               </View>
-              <View style={styles.detailItemRight}>
-                <Text style={[styles.detailLabel, styles.detailLabelRight]}>
-                  Weight
-                </Text>
-                <Text style={[styles.detailValue, styles.detailValueRight]}>
-                  {totalWeight}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.packageImageContainer}>
-              <Image
-                source={require("../../assets/Package-3d-icon.png")}
-                style={styles.packageImage}
+              <View style={styles.packageImageContainer}>
+                <Image
+                  source={require("../../assets/Package-3d-icon.png")}
+                  style={styles.packageImage}
                 // resizeMode="contain"
-              />
+                />
+              </View>
+            </View>
+          </ScrollView>
+        )}
+      </Animated.View>
+
+      {/* Customer Contact Section - above safe area */}
+      {/* Customer Contact Section - Sticky footer when expanded */}
+      {!isBottomSheetCollapsed && (
+        <View style={[styles.courierSectionOverflow, { bottom: CONTACT_BAR_BOTTOM }]}>
+          <View style={styles.courierInfo}>
+            <View style={styles.courierAvatar}>
+              <Text style={styles.courierAvatarText}>
+                {customerPhone
+                  ? customerPhone.charAt(customerPhone.length - 1)
+                  : customerName
+                    ? customerName.charAt(0).toUpperCase()
+                    : "C"}
+              </Text>
+            </View>
+            <View style={styles.courierDetails}>
+              <Text style={styles.courierName}>
+                {customerPhone || "Phone not available"}
+              </Text>
+              <Text style={styles.courierRole}>
+                {customerName || "Customer"}
+              </Text>
             </View>
           </View>
-
-          {/* Add padding at bottom for courier section overflow */}
-          <View style={{ height: 100 }} />
-        </ScrollView>
-      </View>
-
-      {/* Courier Contact Section - Overflowing */}
-      <View style={styles.courierSectionOverflow}>
-        <View style={styles.courierInfo}>
-          <View style={styles.courierAvatar}>
-            <Text style={styles.courierAvatarText}>
-              {phoneNumber ? phoneNumber.charAt(phoneNumber.length - 1) : "D"}
-            </Text>
-          </View>
-          <View style={styles.courierDetails}>
-            <Text style={styles.courierName}>
-              {phoneNumber || "Delivery Partner"}
-            </Text>
-            <Text style={styles.courierRole}>Courier</Text>
+          <View style={styles.courierActions}>
+            <TouchableOpacity
+              style={styles.courierButton}
+              onPress={handleCallCustomer}
+            >
+              <Text style={styles.courierButtonIcon}>📞</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.courierButton, styles.courierButtonSecondary]}
+              onPress={() => customerPhone && handleMessage(customerPhone)}
+            >
+              <Text style={styles.courierButtonIconSecondary}>💬</Text>
+            </TouchableOpacity>
           </View>
         </View>
-        <View style={styles.courierActions}>
-          <TouchableOpacity style={styles.courierButton}>
-            <Text style={styles.courierButtonIcon}>📞</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.courierButton, styles.courierButtonSecondary]}
-          >
-            <Text style={styles.courierButtonIconSecondary}>💬</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+      )}
     </SafeAreaView>
   );
 };
@@ -889,14 +1388,117 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontWeight: "600",
   },
+  topHeader: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    paddingTop: theme.spacing.md,
+    backgroundColor: "transparent",
+    zIndex: 1000,
+  },
+  backButtonHeader: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  backButtonIcon: {
+    fontSize: 20,
+    color: theme.colors.primary,
+    fontWeight: "bold",
+  },
   mapContainer: {
-    height: SCREEN_HEIGHT * 0.5,
+    flex: 1,
     backgroundColor: "#E8E8E8",
+    position: "relative",
+    // zIndex: -1,
+  },
+  map: {
+    flex: 1,
+    width: "100%",
+    height: "100%",
   },
   mapPlaceholder: {
     flex: 1,
     backgroundColor: "#F5F5F5",
-    position: "relative",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  mapLoadingContainer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#F5F5F5",
+  },
+  mapLoadingText: {
+    marginTop: 10,
+    color: "#666",
+    fontSize: 14,
+  },
+  markerContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  markerCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  markerEmoji: {
+    fontSize: 20,
+  },
+  mapTypeSelector: {
+    flexDirection: "row",
+    backgroundColor: "rgba(255,255,255,0.95)",
+    borderRadius: 12,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  mapTypeButton: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.sm + 2,
+    backgroundColor: "transparent",
+  },
+  mapTypeButtonActive: {
+    backgroundColor: theme.colors.primary,
+  },
+  mapTypeButtonText: {
+    ...theme.typography.body,
+    color: "#666",
+    fontWeight: "600",
+  },
+  mapTypeButtonTextActive: {
+    color: theme.colors.textLight,
+    fontWeight: "bold",
   },
   routeLine: {
     position: "absolute",
@@ -950,31 +1552,84 @@ const styles = StyleSheet.create({
   },
   bottomSheet: {
     position: "absolute",
-    bottom: 0,
+    bottom: Platform.OS === "android" ? -12 : 0,
     left: 0,
     right: 0,
     backgroundColor: theme.colors.primaryDark,
-    borderTopLeftRadius: theme.borderRadius.xl,
-    borderTopRightRadius: theme.borderRadius.xl,
-    maxHeight: SCREEN_HEIGHT * 0.6,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 10,
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 12,
+    overflow: "hidden",
+  },
+  grabHandleContainer: {
+    paddingVertical: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.sm,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  grabHandleTouchable: {
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 4,
   },
   grabHandle: {
-    width: 40,
+    width: 36,
     height: 4,
-    backgroundColor: theme.colors.textLight,
+    backgroundColor: "rgba(255,255,255,0.4)",
     borderRadius: 2,
-    alignSelf: "center",
-    marginTop: theme.spacing.sm,
-    marginBottom: theme.spacing.md,
-    opacity: 0.5,
+  },
+  collapsedContent: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.sm,
+    paddingTop: 0,
+    flex: 1,
+  },
+  collapsedRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  collapsedLeft: {
+    flex: 1,
+    marginRight: theme.spacing.md,
+  },
+  collapsedRight: {
+    alignItems: "flex-end",
+  },
+  collapsedBookingId: {
+    ...theme.typography.h3,
+    color: theme.colors.textLight,
+    fontWeight: "bold",
+    marginBottom: theme.spacing.xs,
+  },
+  collapsedCustomer: {
+    ...theme.typography.body,
+    color: theme.colors.textLight,
+    opacity: 0.8,
+  },
+  expandHint: {
+    ...theme.typography.caption,
+    color: theme.colors.textLight,
+    opacity: 0.6,
+    marginTop: theme.spacing.xs,
+    fontSize: 10,
   },
   bottomSheetContent: {
-    // paddingHorizontal: theme.spacing.lg,
+    flex: 1,
+  },
+  bottomSheetContentContainer: {
+    // display: "none",
+    paddingHorizontal: theme.spacing.xs,
     paddingBottom: theme.spacing.xl,
   },
   bookingRow: {
@@ -988,7 +1643,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   bookingLabel: {
-
+    textAlign: "left",
     ...theme.typography.caption,
     color: theme.colors.textLight,
     opacity: 0.7,
@@ -1010,7 +1665,7 @@ const styles = StyleSheet.create({
   },
   statusBadge: {
     backgroundColor: "#333333",
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: theme.spacing.sm,
     paddingVertical: theme.spacing.xs,
     borderRadius: theme.borderRadius.pill,
   },
@@ -1019,15 +1674,43 @@ const styles = StyleSheet.create({
     color: theme.colors.textLight,
     fontWeight: "600",
   },
+  deliveryStatusRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.sm,
+    marginTop: theme.spacing.xs,
+    backgroundColor: theme.colors.backgroundDark,
+    borderRadius: theme.borderRadius.md,
+    marginHorizontal: theme.spacing.xs,
+  },
+  deliveryStatusLabel: {
+    ...theme.typography.body,
+    color: theme.colors.textLight,
+    fontWeight: "500",
+  },
+  deliveryStatusBadge: {
+    backgroundColor: theme.colors.success,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.xs,
+    borderRadius: theme.borderRadius.sm,
+  },
+  deliveryStatusText: {
+    ...theme.typography.body,
+    color: theme.colors.textLight,
+    fontWeight: "600",
+    fontSize: 12,
+  },
   progressWrapper: {
-    marginVertical: theme.spacing.xl,
+    marginVertical: theme.spacing.md,
     alignItems: "center",
     justifyContent: "center",
   },
   progressContainer: {
     flexDirection: "row",
     alignItems: "flex-start",
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: theme.spacing.sm,
     width: "100%",
   },
   progressStep: {
@@ -1053,6 +1736,90 @@ const styles = StyleSheet.create({
   progressCircleCompleted: {
     backgroundColor: "#4CAF50",
     borderColor: "#4CAF50",
+  },
+
+  // Inline Contact Section Styles (within bottom sheet)
+  inlineContactSection: {
+    marginTop: 20,
+    marginHorizontal: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#E0E0E0",
+  },
+  inlineContactToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+  },
+  inlineContactToggleContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  inlineContactToggleText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  inlineContactDetails: {
+    marginTop: 12,
+    padding: 16,
+    backgroundColor: "#F5F5F5",
+    borderRadius: 12,
+  },
+  inlineCustomerInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  inlineCustomerAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#4CAF50",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  inlineCustomerAvatarText: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  inlineCustomerTextInfo: {
+    flex: 1,
+  },
+  inlineCustomerName: {
+    color: "#000",
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  inlineCustomerPhone: {
+    color: "#666",
+    fontSize: 13,
+  },
+  inlineContactActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  inlineContactActionButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#4CAF50",
+  },
+  inlineContactActionText: {
+    color: "#4CAF50",
+    fontSize: 14,
+    fontWeight: "600",
   },
   progressCheck: {
     color: "#FFFFFF",
@@ -1084,8 +1851,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#4CAF50",
     opacity: 1,
   },
+  progressSeparator: {
+    height: 2,
+    backgroundColor: "#333333",
+    marginVertical: theme.spacing.sm,
+  },
+
   datesRow: {
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: theme.spacing.sm,
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: theme.spacing.lg,
@@ -1131,7 +1905,7 @@ const styles = StyleSheet.create({
   },
   detailsRow: {
     // display: 'none',
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: theme.spacing.sm,
     flexDirection: "row",
     marginBottom: theme.spacing.lg,
     position: "relative",
@@ -1204,30 +1978,30 @@ const styles = StyleSheet.create({
     color: theme.colors.textLight,
   },
   courierSectionOverflow: {
-    // display: "none",
     position: "absolute",
-    bottom: 20,
-    left: theme.spacing.sm,
-    right: theme.spacing.sm,
+    left: theme.spacing.md,
+    right: theme.spacing.md,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     backgroundColor: theme.colors.primaryDark,
     padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.lg,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 10,
     zIndex: 10,
   },
   courierSection: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: theme.spacing.lg,
-    paddingTop: theme.spacing.lg,
+    marginTop: theme.spacing.sm,
+    paddingTop: theme.spacing.sm,
     borderTopWidth: 1,
     borderTopColor: "#333333",
   },
@@ -1237,8 +2011,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   courierAvatar: {
-    width: 50,
-    height: 50,
+    width: 40,
+    height: 40,
     borderRadius: 25,
     backgroundColor: theme.colors.secondary,
     justifyContent: "center",
@@ -1284,6 +2058,40 @@ const styles = StyleSheet.create({
   },
   courierButtonIconSecondary: {
     fontSize: 20,
+  },
+  courierSectionButton: {
+    position: "absolute",
+    left: theme.spacing.md,
+    right: theme.spacing.md,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: theme.colors.primaryDark,
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.lg,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 10,
+    zIndex: 10,
+  },
+  expandIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255, 255, 255, 0.12)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: theme.spacing.sm,
+  },
+  expandIconText: {
+    fontSize: 18,
+    color: theme.colors.textLight,
+    fontWeight: "bold",
   },
   errorContainer: {
     flex: 1,

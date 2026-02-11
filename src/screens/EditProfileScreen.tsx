@@ -15,7 +15,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { saveUserDetails } from '../services/firebaseService';
+import { saveUserDetails, uploadProfileImage } from '../services/firebaseService';
 import { PickerDetails } from './PickerDetailsScreen';
 import { storageService } from '../services/storageService';
 import { theme } from '../config/theme';
@@ -54,7 +54,7 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
   }, [pickerDetails]);
 
   // Check if any field has changed
-  const hasChanges = 
+  const hasChanges =
     fullName.trim() !== originalFullName ||
     age.trim() !== originalAge ||
     profilePhoto !== originalProfilePhoto;
@@ -93,32 +93,58 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
     }
   };
 
-  const handleSave = async () => {
-    // Validation
+  const handleSave = async (exitAfterSave?: boolean) => {
     if (!fullName.trim()) {
       Alert.alert('Validation Error', 'Please enter your full name');
       return;
+    }
+
+    setLoading(true);
+
+    let photoUrl = profilePhoto;
+    // Upload photo if changed and it's a local file (file:// or content://)
+    // We assume if it changed, it's a new local pick. Remote URLs start with http
+    if (profilePhoto && profilePhoto !== originalProfilePhoto) {
+      try {
+        const uploadResult = await uploadProfileImage(phoneNumber, profilePhoto);
+        if (uploadResult.success && uploadResult.downloadUrl) {
+          photoUrl = uploadResult.downloadUrl;
+          console.log('✅ Profile photo uploaded:', photoUrl);
+        } else {
+          console.warn('❌ Failed to upload profile photo:', uploadResult.error);
+          Alert.alert(
+            'Image Upload Failed',
+            `Could not upload profile photo: ${uploadResult.error}\n\nPlease check your internet connection and permissions.`
+          );
+          // Revert to original photo if upload fails to avoid saving broken local URI
+          photoUrl = originalProfilePhoto;
+        }
+      } catch (error) {
+        console.error('Error uploading photo:', error);
+        photoUrl = originalProfilePhoto;
+      }
     }
 
     const details: PickerDetails = {
       fullName: fullName.trim(),
       phoneNumber,
       ...(age.trim() && { age: age.trim() }),
-      ...(profilePhoto && { profilePhoto }),
+      ...(photoUrl && { profilePhoto: photoUrl }),
     };
 
-    setLoading(true);
-
     try {
-      // Save to Firebase
       const result = await saveUserDetails(phoneNumber, details);
 
       if (result.success) {
-        // Save to local storage
         await storageService.savePickerDetails(details);
-        // Call onSave callback to update parent state
         onSave(details);
-        Alert.alert('Success', 'Profile updated successfully!');
+        if (exitAfterSave) {
+          Alert.alert('Success', 'Profile updated successfully!', [
+            { text: 'OK', onPress: onBack },
+          ]);
+        } else {
+          Alert.alert('Success', 'Profile updated successfully!');
+        }
       } else {
         Alert.alert('Error', result.error || 'Failed to update profile');
       }
@@ -129,26 +155,67 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
     }
   };
 
+  const handleBackPress = () => {
+    if (!hasChanges) {
+      onBack();
+      return;
+    }
+    Alert.alert(
+      'Unsaved changes',
+      'You have unsaved changes. Save before leaving?',
+      [
+        { text: 'Stay', style: 'cancel' },
+        {
+          text: 'Discard & Leave',
+          style: 'destructive',
+          onPress: () => {
+            setFullName(originalFullName);
+            setAge(originalAge);
+            setProfilePhoto(originalProfilePhoto);
+            onBack();
+          },
+        },
+        {
+          text: 'Save & Leave',
+          onPress: () => handleSave(true),
+        },
+      ]
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={[]}>
       <StatusBar style="light" />
 
-      {/* Header */}
+      {/* Header - back left, title center, Save top right (only when changed) */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.iconButton} onPress={onBack}>
+        <TouchableOpacity style={styles.iconButton} onPress={handleBackPress} activeOpacity={0.8}>
           <Ionicons name="arrow-back" size={22} color="#000" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Edit Profile</Text>
-        <View style={styles.placeholder} />
+        <Text style={styles.headerTitle} numberOfLines={1}>Edit Profile</Text>
+        {hasChanges ? (
+          <TouchableOpacity
+            style={styles.headerSaveButton}
+            onPress={() => handleSave()}
+            disabled={loading}
+            activeOpacity={0.8}
+          >
+            {loading ? (
+              <ActivityIndicator size="small" color={theme.colors.success} />
+            ) : (
+              <Text style={styles.headerSaveText}>Save</Text>
+            )}
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.headerSpacer} />
+        )}
       </View>
 
       <ScrollView
         style={styles.content}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.scrollContent,
-          hasChanges && { paddingBottom: 100},
-        ]}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
       >
         {/* Profile Photo Section */}
         <View style={styles.profilePhotoSection}>
@@ -197,7 +264,7 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
             <Text style={styles.label}>Phone Number</Text>
             <View style={styles.readOnlyInput}>
               <Text style={styles.readOnlyText}>{phoneNumber}</Text>
-              <Ionicons name="lock-closed" size={16} color="#999" />
+              <Ionicons name="lock-closed" size={16} color="rgba(255,255,255,0.5)" />
             </View>
           </View>
 
@@ -216,34 +283,6 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
           </View>
         </View>
       </ScrollView>
-
-      {/* Bottom Action Buttons - Only show when changes are made */}
-      {hasChanges && (
-        <View style={styles.bottomActions}>
-          <TouchableOpacity
-            style={styles.discardButton}
-            onPress={() => {
-              setFullName(originalFullName);
-              setAge(originalAge);
-              setProfilePhoto(originalProfilePhoto);
-            }}
-            disabled={loading}
-          >
-            <Text style={styles.discardButtonText}>Discard</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.saveButtonBottom}
-            onPress={handleSave}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.saveButtonTextBottom}>Save</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      )}
     </SafeAreaView>
   );
 };
@@ -255,12 +294,14 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: theme.colors.backgroundDark,
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 16,
+    paddingHorizontal: 16,
+    paddingTop: 48,
+    paddingBottom: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.12)',
   },
   iconButton: {
     width: 40,
@@ -271,25 +312,40 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerTitle: {
-    fontSize: 20,
+    flex: 1,
+    fontSize: 18,
     fontWeight: '700',
     color: '#fff',
+    textAlign: 'center',
   },
-  placeholder: {
+  headerSpacer: {
     width: 40,
     height: 40,
+  },
+  headerSaveButton: {
+    minWidth: 56,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    paddingRight: 4,
+  },
+  headerSaveText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: theme.colors.success,
   },
   content: {
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 30,
+    paddingBottom: 32,
+    paddingTop: 8,
   },
   profilePhotoSection: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 32,
-    paddingBottom: 24,
+    paddingTop: 24,
+    paddingBottom: 20,
   },
   formContainer: {
     paddingHorizontal: 20,
@@ -300,8 +356,8 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#111',
-    marginBottom: 12,
+    color: 'rgba(255,255,255,0.9)',
+    marginBottom: 8,
   },
   required: {
     color: '#E53935',
@@ -370,54 +426,7 @@ const styles = StyleSheet.create({
   },
   readOnlyText: {
     fontSize: 16,
-    color: '#666',
-  },
-  bottomActions: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    paddingBottom: 30,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
-    gap: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  discardButton: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: theme.colors.success,
-  },
-  discardButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111',
-  },
-  saveButtonBottom: {
-    flex: 1,
-    backgroundColor: '#111',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  saveButtonTextBottom: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
+    color: 'rgba(255,255,255,0.7)',
   },
 });
 

@@ -32,6 +32,13 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const userName = pickerDetails?.fullName || "Delivery Partner";
   const userPhone = phoneNumber || "No phone number";
 
+  const [imageError, setImageError] = React.useState(false);
+
+  // Reset error when photo changes
+  React.useEffect(() => {
+    setImageError(false);
+  }, [pickerDetails?.profilePhoto]);
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -41,10 +48,14 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
         {/* PROFILE CARD - Fixed */}
         <View style={styles.profileSection}>
-          {pickerDetails?.profilePhoto ? (
+          {pickerDetails?.profilePhoto && !imageError ? (
             <Image
               source={{ uri: pickerDetails.profilePhoto }}
               style={styles.profileImage}
+              onError={(e) => {
+                console.log('Profile image load error:', e.nativeEvent.error);
+                setImageError(true);
+              }}
             />
           ) : (
             <View style={styles.profileImagePlaceholder}>
@@ -56,24 +67,6 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
           <Text style={styles.profileName}>{userName}</Text>
           <Text style={styles.profileEmail}>{userPhone}</Text>
-
-          {/* QUICK ACTIONS */}
-          <View style={styles.quickActions}>
-            <TouchableOpacity style={styles.quickActionButton}>
-              <Ionicons name="notifications-outline" size={22} color="#fff" />
-              <Text style={styles.quickActionText}>Notification</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.quickActionButton}>
-              <Ionicons name="gift-outline" size={22} color="#fff" />
-              <Text style={styles.quickActionText}>Voucher</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.quickActionButton}>
-              <Ionicons name="time-outline" size={22} color="#fff" />
-              <Text style={styles.quickActionText}>History</Text>
-            </TouchableOpacity>
-          </View>
         </View>
 
         {/* SETTINGS - Fixed */}
@@ -234,30 +227,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  quickActions: {
-    flexDirection: "row",
-    marginTop: 24,
-    paddingHorizontal: 16,
-    gap: 12,
-  },
-
-  quickActionButton: {
-    flex: 1,
-    backgroundColor: "#1C1C1C",
-    borderRadius: 16,
-    paddingVertical: 14,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: theme.colors.success,
-  },
-
-  quickActionText: {
-    fontSize: 12,
-    color: "#EAEAEA",
-    marginTop: 6,
-    fontWeight: "600",
-  },
-
   settingsSection: {
     // zIndex: 1,
     flex: 1,
@@ -268,7 +237,7 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingBottom: 30,
     paddingHorizontal: 16,
-    
+
   },
 
   settingsItemContainer: {

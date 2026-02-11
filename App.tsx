@@ -9,6 +9,7 @@ import PickerDetailsScreen, {
 import HomeScreen from './src/screens/HomeScreen';
 import OrdersScreen from './src/screens/OrdersScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import OrderPreviewScreen from './src/screens/OrderPreviewScreen';
 import OrderDetailsScreen from './src/screens/OrderDetailsScreen';
 import EditProfileScreen from './src/screens/EditProfileScreen';
 import AddressManagementScreen from './src/screens/AddressManagementScreen';
@@ -19,8 +20,9 @@ import LoadingScreen from './src/components/LoadingScreen';
 import { storageService } from './src/services/storageService';
 import { getUserDetails } from './src/services/firebaseService';
 import { initializeNotifications } from './src/services/notificationService';
+import { isProfileComplete } from './src/utils/profileValidation';
 
-type AppState = 'loading' | 'login' | 'pickerDetails' | 'home' | 'orderDetails' | 'editProfile' | 'addressManagement' | 'helpSupport' | 'settings';
+type AppState = 'loading' | 'login' | 'pickerDetails' | 'home' | 'orderPreview' | 'orderDetails' | 'editProfile' | 'addressManagement' | 'helpSupport' | 'settings';
 type TabName = 'Home' | 'Orders' | 'Profile';
 
 export default function App() {
@@ -61,7 +63,7 @@ export default function App() {
         // Handle notification tapped
         (response) => {
           console.log('👆 Notification tapped:', response);
-          const orderId = response.notification.request.content.data?.orderId;
+          const orderId = response.notification.request.content.data?.orderId as string | undefined;
           if (orderId) {
             // Navigate to order details
             setSelectedOrderForDetails(orderId);
@@ -81,35 +83,64 @@ export default function App() {
   const checkExistingLogin = async () => {
     try {
       const userData = await storageService.getUserData();
-      
+
       if (userData && userData.isLoggedIn && userData.phoneNumber) {
         setPhoneNumber(userData.phoneNumber);
-        
+
         let userPickerDetails: PickerDetails | null = null;
-        
-        // Check if user exists in Firebase database
+
+        // ✅ PRIORITY 1: Check Firebase database first (source of truth)
         try {
+          console.log('Checking Firebase for user profile...');
           const firebaseData = await getUserDetails(userData.phoneNumber);
+
           if (firebaseData.success && firebaseData.data) {
-            // User exists in Firebase database - don't show profile screen
+            console.log('✅ User profile found in Firebase');
             userPickerDetails = firebaseData.data;
+
+            // User exists in Firebase - sync to local storage and navigate to home
+            // We assume existing users have completed their profile previously
+            console.log('✅ User exists in Firebase, allowing access without strict profile check');
             await storageService.savePickerDetails(firebaseData.data);
             setPickerDetails(userPickerDetails);
             setAppState('home');
             return;
+          } else {
+            // ⚠️ CRITICAL: User not found in Firebase (deleted or never existed)
+            // Clear all local data and force re-login for security
+            console.warn('🔒 User not found in Firebase - clearing local cache and forcing logout');
+            await storageService.clearAllData();
+            setPhoneNumber('');
+            setPickerDetails(null);
+            setAppState('login');
+            return;
           }
         } catch (firebaseError) {
-          console.warn('Could not fetch from Firebase:', firebaseError);
+          console.warn('Firebase fetch error:', firebaseError);
+          // On Firebase error, we cannot verify user exists
+          // For security, we should not allow access with only local cache
+          // But we'll allow offline mode for better UX (you can change this)
         }
-        
-        // User doesn't exist in Firebase, check local storage
+
+        // ✅ PRIORITY 2: Fallback to local storage (offline support ONLY)
+        // This is only reached if Firebase had an error (network issue, etc.)
+        // NOT if user doesn't exist in Firebase (that's handled above)
         if (userData.pickerDetails) {
-          // User has local profile data
+          console.log('⚠️ Using local storage profile data (offline mode - Firebase unavailable)');
           userPickerDetails = userData.pickerDetails;
-          setPickerDetails(userPickerDetails);
-          setAppState('home');
+
+          // Validate profile is complete before navigating to home
+          if (isProfileComplete(userPickerDetails)) {
+            setPickerDetails(userPickerDetails);
+            setAppState('home');
+          } else {
+            // Profile exists but incomplete - show profile form
+            setPickerDetails(userPickerDetails);
+            setAppState('pickerDetails');
+          }
         } else {
-          // User doesn't exist in database and has no local data, show profile form
+          // No profile data anywhere - show profile form
+          console.log('No profile data found, showing profile form');
           setAppState('pickerDetails');
         }
       } else {
@@ -127,29 +158,29 @@ export default function App() {
     // Save login state
     await storageService.savePhoneNumber(phone);
     await storageService.saveLoginState(true);
-    
-    // Check if user exists in Firebase database
+
+    // ✅ ALWAYS check Firebase first - it's the source of truth
     try {
       const firebaseData = await getUserDetails(phone);
+
       if (firebaseData.success && firebaseData.data) {
-        // User exists in Firebase database - don't show profile screen
+        // User exists in Firebase - sync to local storage and navigate to home
+        // We assume existing users have completed their profile previously
+        console.log('✅ User exists in Firebase, skipping profile completion check');
         setPickerDetails(firebaseData.data);
         await storageService.savePickerDetails(firebaseData.data);
         setAppState('home');
         return;
+      } else {
+        // User doesn't exist in Firebase - show profile form for first-time setup
+        console.log('User not found in Firebase, showing profile form');
+        setAppState('pickerDetails');
+        return;
       }
     } catch (error) {
-      console.warn('Could not fetch from Firebase, checking local storage:', error);
-    }
-    
-    // Fallback to local storage check
-    const existingDetails = await storageService.getPickerDetails();
-    if (existingDetails && existingDetails.fullName) {
-      // User has local profile data
-      setPickerDetails(existingDetails);
-      setAppState('home');
-    } else {
-      // User doesn't exist in database, show profile form
+      console.error('Firebase error during login:', error);
+      // On Firebase error, show profile form (safe fallback)
+      // User can create/update profile which will sync to Firebase
       setAppState('pickerDetails');
     }
   };
@@ -190,15 +221,24 @@ export default function App() {
   };
 
   const handleViewOrderDetails = (orderId: string) => {
-    // Navigate to Order Details Screen
+    // Navigate to Order Preview (product/order details) first
     setSelectedOrderForDetails(orderId);
+    setAppState('orderPreview');
+  };
+
+  const handleBackFromOrderPreview = () => {
+    setSelectedOrderForDetails(null);
+    setAppState('home');
+  };
+
+  const handleViewOnMap = () => {
+    // From preview, go to map/delivery screen
     setAppState('orderDetails');
   };
 
   const handleBackFromOrderDetails = () => {
     setSelectedOrderForDetails(null);
     setAppState('home');
-    // Keep the Orders tab active
   };
 
   const handleBackFromProfileScreen = () => {
@@ -225,9 +265,10 @@ export default function App() {
     switch (activeTab) {
       case 'Home':
         return (
-          <HomeScreen 
+          <HomeScreen
             key={homeScreenRefreshKey}
-            phoneNumber={phoneNumber} 
+            refreshTrigger={homeScreenRefreshKey}
+            phoneNumber={phoneNumber}
             pickerDetails={pickerDetails}
             onOrderSelect={handleOrderSelect}
             onOrderPicked={handleOrderPicked}
@@ -256,7 +297,12 @@ export default function App() {
         );
       default:
         return (
-          <HomeScreen phoneNumber={phoneNumber} pickerDetails={pickerDetails} />
+          <HomeScreen
+            refreshTrigger={homeScreenRefreshKey}
+            phoneNumber={phoneNumber}
+            pickerDetails={pickerDetails}
+            onViewOrderDetails={handleViewOrderDetails}
+          />
         );
     }
   };
@@ -273,14 +319,33 @@ export default function App() {
         />
       )}
       {appState === 'home' && (
-        <View style={styles.homeContainer}>
-          {renderActiveScreen()}
-          <CustomTabBar
-            tabs={tabs}
-            activeTab={activeTab}
-            onTabPress={(tabName) => setActiveTab(tabName as TabName)}
-          />
-        </View>
+        <>
+          {/* ✅ Safety guard: Redirect to profile if incomplete */}
+          {!isProfileComplete(pickerDetails) ? (
+            <PickerDetailsScreen
+              phoneNumber={phoneNumber}
+              onSubmit={handlePickerDetailsSubmit}
+            />
+          ) : (
+            <View style={styles.homeContainer}>
+              {renderActiveScreen()}
+              <CustomTabBar
+                tabs={tabs}
+                activeTab={activeTab}
+                onTabPress={(tabName) => setActiveTab(tabName as TabName)}
+              />
+            </View>
+          )}
+        </>
+      )}
+      {appState === 'orderPreview' && selectedOrderForDetails && (
+        <OrderPreviewScreen
+          orderId={selectedOrderForDetails}
+          phoneNumber={phoneNumber}
+          onBack={handleBackFromOrderPreview}
+          onViewOnMap={handleViewOnMap}
+          onPickOrder={handleOrderPicked}
+        />
       )}
       {appState === 'orderDetails' && selectedOrderForDetails && (
         <OrderDetailsScreen
@@ -290,7 +355,7 @@ export default function App() {
         />
       )}
       {appState === 'editProfile' && (
-        <EditProfileScreen 
+        <EditProfileScreen
           phoneNumber={phoneNumber}
           pickerDetails={pickerDetails}
           onBack={handleBackFromProfileScreen}

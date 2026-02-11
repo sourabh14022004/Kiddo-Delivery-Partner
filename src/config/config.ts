@@ -13,12 +13,15 @@ export const BRANCH_ID = '68bf2d273845635d9b08f182';
 export const SHOPIFY_STORE_DOMAIN = 'kiddo-quick-baby-joy-m4bpo.myshopify.com';
 
 export const SHOPIFY_STOREFRONT_ACCESS_TOKEN =
-  '6ac11171e7698f6a3e940bb8d329d58a';
+  // '6ac11171e7698f6a3e940bb8d329d58a';
+    '10046ede27c29c52066d5bc9871b425d'
 
 // Shopify Admin API Configuration (for Try & Buy and Order Creation)
 // Support multiple API keys for rate limit handling
 export const SHOPIFY_ADMIN_API_KEYS = [
-  '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'
+  // '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'
+  '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'
+  
 ];
 
 export const SHOPIFY_ADMIN_API_VERSION = '2025-10';

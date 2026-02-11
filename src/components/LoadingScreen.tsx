@@ -27,9 +27,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   container: {
+    flex: 1,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: theme.colors.background,
     paddingVertical: theme.spacing.xxl,
   },
   text: {

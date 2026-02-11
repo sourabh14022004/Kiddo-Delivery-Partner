@@ -1,0 +1,11 @@
+#!/bin/bash
+echo "Deploying Firestore security rules..."
+echo ""
+echo "Make sure you have Firebase CLI installed:"
+echo "  npm install -g firebase-tools"
+echo ""
+echo "Then run:"
+echo "  firebase login"
+echo "  firebase deploy --only firestore:rules"
+echo ""
+echo "Or use the Firebase Console method below."

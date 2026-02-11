@@ -9,6 +9,7 @@ import {
   RefreshControl,
   TextInput,
   Animated,
+  Linking,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -44,6 +45,7 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+
   const scrollViewRef = useRef<ScrollView>(null);
   const orderRefs = useRef<{ [key: string]: View | null }>({});
 
@@ -63,7 +65,8 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({
   // Filter orders by status and search query
   const filterOrders = useCallback(
     (ordersList: ShopifyOrder[]): ShopifyOrder[] => {
-      let filtered = ordersList;
+      // First filter out canceled orders
+      let filtered = ordersList.filter(order => !order.cancelledAt);
 
       // Filter by status
       if (statusFilter !== "all") {
@@ -158,6 +161,7 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({
             updatedAt:
               orderData.updatedAt?.toDate?.()?.toISOString() ||
               new Date().toISOString(),
+            cancelledAt: orderData.cancelledAt || null,
             displayFulfillmentStatus:
               shopifyData.displayFulfillmentStatus || "UNFULFILLED",
             displayFinancialStatus:
@@ -449,8 +453,8 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({
           ? order.returnedAt.toDate()
           : new Date(order.returnedAt)
         : order.updatedAt.toDate
-        ? order.updatedAt.toDate()
-        : new Date(order.updatedAt);
+          ? order.updatedAt.toDate()
+          : new Date(order.updatedAt);
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -487,6 +491,8 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({
 
     return "";
   };
+
+
 
   if (loading) {
     return (
@@ -776,6 +782,8 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({
                           </View>
                         </View>
                       </View>
+
+
                     </View>
                   </LinearGradient>
                 </TouchableOpacity>

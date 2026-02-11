@@ -6,6 +6,9 @@ const STORAGE_KEYS = {
   PICKER_DETAILS: '@kiddo:pickerDetails',
   IS_LOGGED_IN: '@kiddo:isLoggedIn',
   AUTH_TOKEN: '@kiddo:authToken',
+  CACHED_ORDERS: '@kiddo:cachedOrders',
+  CACHED_ORDERS_TIMESTAMP: '@kiddo:cachedOrdersTimestamp',
+  NOTIFICATIONS_ENABLED: '@kiddo:notificationsEnabled',
 };
 
 export interface StoredUserData {
@@ -135,9 +138,79 @@ export const storageService = {
         STORAGE_KEYS.PICKER_DETAILS,
         STORAGE_KEYS.IS_LOGGED_IN,
         STORAGE_KEYS.AUTH_TOKEN,
+        STORAGE_KEYS.CACHED_ORDERS,
+        STORAGE_KEYS.CACHED_ORDERS_TIMESTAMP,
       ]);
     } catch (error) {
       console.error('Error clearing user data:', error);
+    }
+  },
+
+  // Cache orders for instant loading
+  saveCachedOrders: async (orders: any[]): Promise<void> => {
+    try {
+      await Promise.all([
+        AsyncStorage.setItem(STORAGE_KEYS.CACHED_ORDERS, JSON.stringify(orders)),
+        AsyncStorage.setItem(STORAGE_KEYS.CACHED_ORDERS_TIMESTAMP, Date.now().toString()),
+      ]);
+    } catch (error) {
+      console.error('Error saving cached orders:', error);
+    }
+  },
+
+  // Get cached orders (returns null if cache is stale or doesn't exist)
+  getCachedOrders: async (maxAgeMs: number = 5 * 60 * 1000): Promise<any[] | null> => {
+    try {
+      const [cachedOrders, timestamp] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEYS.CACHED_ORDERS),
+        AsyncStorage.getItem(STORAGE_KEYS.CACHED_ORDERS_TIMESTAMP),
+      ]);
+
+      if (!cachedOrders || !timestamp) {
+        return null;
+      }
+
+      const age = Date.now() - parseInt(timestamp, 10);
+      if (age > maxAgeMs) {
+        // Cache is stale
+        return null;
+      }
+
+      return JSON.parse(cachedOrders);
+    } catch (error) {
+      console.error('Error getting cached orders:', error);
+      return null;
+    }
+  },
+
+  // Clear cached orders (e.g., when an order is picked)
+  clearCachedOrders: async (): Promise<void> => {
+    try {
+      await AsyncStorage.multiRemove([
+        STORAGE_KEYS.CACHED_ORDERS,
+        STORAGE_KEYS.CACHED_ORDERS_TIMESTAMP,
+      ]);
+    } catch (error) {
+      console.error('Error clearing cached orders:', error);
+    }
+  },
+
+  // Notifications preference (for settings)
+  getNotificationsEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(STORAGE_KEYS.NOTIFICATIONS_ENABLED);
+      return value === null ? true : value === 'true';
+    } catch (error) {
+      console.error('Error getting notifications preference:', error);
+      return true;
+    }
+  },
+
+  setNotificationsEnabled: async (enabled: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.NOTIFICATIONS_ENABLED, String(enabled));
+    } catch (error) {
+      console.error('Error saving notifications preference:', error);
     }
   },
 };

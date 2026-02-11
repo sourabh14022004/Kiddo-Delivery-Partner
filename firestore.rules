@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Delivery Partners Collection
+    // Allow users to read/write their own document using phone number as document ID
+    match /deliveryPartners/{phoneNumber} {
+      allow read: if true; // Allow reading any delivery partner (for admin/verification purposes)
+      allow write: if true; // Allow creating/updating delivery partner documents
+      // In production, you might want to restrict this:
+      // allow read: if request.auth != null;
+      // allow write: if request.auth != null && request.resource.data.phoneNumber == phoneNumber;
+    }
+    
+    // Notification Tokens Collection
+    // Allow users to read/write their own notification token
+    match /notificationTokens/{phoneNumber} {
+      allow read: if true; // Allow reading notification tokens (for sending notifications)
+      allow write: if true; // Allow creating/updating notification tokens
+      // In production, you might want to restrict this:
+      // allow read: if request.auth != null;
+      // allow write: if request.auth != null && request.resource.data.phoneNumber == phoneNumber;
+    }
+    
+    // Orders Collection
+    // Allow reading and writing orders
+    match /orders/{orderId} {
+      allow read: if true;
+      allow write: if true;
+      // In production, you might want to restrict this:
+      // allow read: if request.auth != null;
+      // allow write: if request.auth != null;
+    }
+    
+    // Notifications Collection
+    // Allow reading and writing notification records
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow write: if true;
+      // In production, you might want to restrict this:
+      // allow read: if request.auth != null;
+      // allow write: if request.auth != null;
+    }
+  }
+}
