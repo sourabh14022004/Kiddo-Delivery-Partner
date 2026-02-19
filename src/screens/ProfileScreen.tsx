@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,33 +9,25 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { PickerDetails } from "./PickerDetailsScreen";
+import { useNavigation } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { theme } from "../config/theme";
+import { useAppContext } from "../context/AppContext";
+import { RootStackParamList } from "../navigation/RootNavigator";
 
-interface ProfileScreenProps {
-  phoneNumber?: string;
-  pickerDetails?: PickerDetails | null;
-  onLogout?: () => void;
-  onNavigateToEditProfile?: () => void;
-  onNavigateToHelpSupport?: () => void;
-  onNavigateToSettings?: () => void;
-}
+type ProfileScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
-const ProfileScreen: React.FC<ProfileScreenProps> = ({
-  phoneNumber,
-  pickerDetails,
-  onLogout,
-  onNavigateToEditProfile,
-  onNavigateToHelpSupport,
-  onNavigateToSettings,
-}) => {
+const ProfileScreen: React.FC = () => {
+  const { phoneNumber, pickerDetails, onLogout } = useAppContext();
+  const navigation = useNavigation<ProfileScreenNavigationProp>();
+
   const userName = pickerDetails?.fullName || "Delivery Partner";
   const userPhone = phoneNumber || "No phone number";
 
-  const [imageError, setImageError] = React.useState(false);
+  const [imageError, setImageError] = useState(false);
 
   // Reset error when photo changes
-  React.useEffect(() => {
+  useEffect(() => {
     setImageError(false);
   }, [pickerDetails?.profilePhoto]);
 
@@ -75,7 +67,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <SettingsItem
               icon="person-outline"
               label="Edit Profile"
-              onPress={onNavigateToEditProfile}
+              onPress={() => navigation.navigate('EditProfile', { phoneNumber, pickerDetails })}
             />
           </View>
 
@@ -83,7 +75,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <SettingsItem
               icon="headset-outline"
               label="Help & Support"
-              onPress={onNavigateToHelpSupport}
+              onPress={() => navigation.navigate('HelpSupport')}
             />
           </View>
 
@@ -91,7 +83,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <SettingsItem
               icon="settings-outline"
               label="Setting"
-              onPress={onNavigateToSettings}
+              onPress={() => navigation.navigate('Settings')}
             />
           </View>
 
@@ -157,24 +149,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: "100%",
   },
-
-
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#fff",
-    paddingTop: 8,
-  },
-
-  iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#E5E5E5",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
   profileSection: {
     backgroundColor: "#111",
     borderColor: "black",
@@ -186,10 +160,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 2,
     width: "100%",
     alignSelf: "stretch",
-    marginLeft: 0,
-    marginRight: 0,
   },
-
   profileImage: {
     width: 110,
     height: 110,
@@ -198,7 +169,6 @@ const styles = StyleSheet.create({
     borderColor: "#fff",
     marginBottom: 12,
   },
-
   profileImagePlaceholder: {
     width: 110,
     height: 110,
@@ -208,27 +178,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 12,
   },
-
   profileImageText: {
     fontSize: 40,
     fontWeight: "700",
     color: "#fff",
   },
-
   profileName: {
     fontSize: 20,
     fontWeight: "700",
     color: "#fff",
   },
-
   profileEmail: {
     fontSize: 14,
     color: "#B5B5B5",
     marginTop: 4,
   },
-
   settingsSection: {
-    // zIndex: 1,
     flex: 1,
     backgroundColor: "#fff",
     borderTopLeftRadius: 28,
@@ -237,9 +202,7 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingBottom: 30,
     paddingHorizontal: 16,
-
   },
-
   settingsItemContainer: {
     backgroundColor: "#fff",
     borderRadius: 12,
@@ -248,25 +211,21 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     overflow: "hidden",
   },
-
   settingsItem: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 16,
     paddingHorizontal: 20,
   },
-
   settingsIcon: {
     marginRight: 14,
   },
-
   settingsText: {
     flex: 1,
     fontSize: 15,
     fontWeight: "500",
     color: "#111",
   },
-
   logoutText: {
     color: "#E53935",
     fontWeight: "600",

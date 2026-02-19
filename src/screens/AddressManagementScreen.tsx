@@ -9,20 +9,19 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { theme } from '../config/theme';
 
-interface AddressManagementScreenProps {
-  onBack: () => void;
-}
+const AddressManagementScreen: React.FC = () => {
+  const navigation = useNavigation();
 
-const AddressManagementScreen: React.FC<AddressManagementScreenProps> = ({ onBack }) => {
   return (
     <SafeAreaView style={styles.container} edges={[]}>
       <StatusBar style="light" />
-      
+
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.iconButton} onPress={onBack}>
+        <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={22} color="#000" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Address Management</Text>
@@ -90,4 +89,3 @@ const styles = StyleSheet.create({
 });
 
 export default AddressManagementScreen;
-

@@ -4,8 +4,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import HomeScreen from '../screens/HomeScreen';
 import OrdersScreen from '../screens/OrdersScreen';
 import ProfileScreen from '../screens/ProfileScreen';
-import { AppProvider, useAppContext } from '../context/AppContext';
-import { PickerDetails } from '../screens/PickerDetailsScreen';
+import CustomTabBar from '../components/CustomTabBar';
 
 export type TabParamList = {
   Home: undefined;
@@ -15,100 +14,58 @@ export type TabParamList = {
 
 const Tab = createBottomTabNavigator<TabParamList>();
 
-// Screens that use context
-const HomeScreenWithContext = () => {
-  const { phoneNumber, pickerDetails } = useAppContext();
-  return <HomeScreen phoneNumber={phoneNumber} pickerDetails={pickerDetails} />;
-};
-
-const ProfileScreenWithContext = () => {
-  const { phoneNumber, pickerDetails, onLogout } = useAppContext();
-  return (
-    <ProfileScreen
-      phoneNumber={phoneNumber}
-      pickerDetails={pickerDetails}
-      onLogout={onLogout}
-    />
-  );
-};
-
-interface TabNavigatorProps {
-  phoneNumber: string;
-  pickerDetails: PickerDetails | null;
-  onLogout: () => void;
-}
-
-const TabNavigatorContent: React.FC = () => {
-
+const TabNavigator = () => {
   return (
     <Tab.Navigator
+      tabBar={({ state, descriptors, navigation }) => {
+        const tabs = state.routes.map((route) => {
+          let icon = '';
+          switch (route.name) {
+            case 'Home':
+              icon = '🏠';
+              break;
+            case 'Orders':
+              icon = '📦';
+              break;
+            case 'Profile':
+              icon = '👤';
+              break;
+          }
+          return {
+            name: route.name,
+            icon,
+            label: (descriptors[route.key].options.tabBarLabel as string) || route.name,
+          };
+        });
+
+        return (
+          <CustomTabBar
+            tabs={tabs}
+            activeTab={state.routes[state.index].name}
+            onTabPress={(name) => navigation.navigate(name)}
+          />
+        );
+      }}
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#007AFF',
-        tabBarInactiveTintColor: '#999',
-        tabBarStyle: {
-          backgroundColor: '#fff',
-          borderTopWidth: 1,
-          borderTopColor: '#e0e0e0',
-          paddingBottom: 5,
-          paddingTop: 5,
-          height: 60,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '500',
-        },
       }}
     >
       <Tab.Screen
         name="Home"
-        component={HomeScreenWithContext}
-        options={{
-          tabBarLabel: 'Home',
-          tabBarIcon: ({ color, size }) => (
-            <TabIcon icon="🏠" color={color} size={size} />
-          ),
-        }}
+        component={HomeScreen}
+        options={{ tabBarLabel: 'Home' }}
       />
-      
       <Tab.Screen
         name="Orders"
         component={OrdersScreen}
-        options={{
-          tabBarLabel: 'Orders',
-          tabBarIcon: ({ color, size }) => (
-            <TabIcon icon="📦" color={color} size={size} />
-          ),
-        }}
+        options={{ tabBarLabel: 'Orders' }}
       />
-      
       <Tab.Screen
         name="Profile"
-        component={ProfileScreenWithContext}
-        options={{
-          tabBarLabel: 'Profile',
-          tabBarIcon: ({ color, size }) => (
-            <TabIcon icon="👤" color={color} size={size} />
-          ),
-        }}
+        component={ProfileScreen}
+        options={{ tabBarLabel: 'Profile' }}
       />
     </Tab.Navigator>
-  );
-};
-
-const TabNavigator: React.FC<TabNavigatorProps> = ({
-  phoneNumber,
-  pickerDetails,
-  onLogout,
-}) => {
-  return (
-    <AppProvider
-      phoneNumber={phoneNumber}
-      pickerDetails={pickerDetails}
-      onLogout={onLogout}
-    >
-      <TabNavigatorContent />
-    </AppProvider>
   );
 };
 
@@ -120,4 +77,3 @@ const TabIcon: React.FC<{ icon: string; color: string; size: number }> = ({
 };
 
 export default TabNavigator;
-

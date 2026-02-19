@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,22 +7,21 @@ import {
   TouchableOpacity,
   Switch,
   Alert,
-} from 'react-native';
-import { StatusBar } from 'expo-status-bar';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { theme } from '../config/theme';
-import { storageService } from '../services/storageService';
-import Constants from 'expo-constants';
+  Platform,
+} from "react-native";
+import { StatusBar } from "expo-status-bar";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { useNavigation } from "@react-navigation/native";
+import { theme } from "../config/theme";
+import { storageService } from "../services/storageService";
+import Constants from "expo-constants";
 
-interface SettingsScreenProps {
-  onBack: () => void;
-}
+const APP_VERSION = Constants.expoConfig?.version ?? "1.0.0";
+const APP_NAME = Constants.expoConfig?.name ?? "Kiddo Delivery Partner";
 
-const APP_VERSION = Constants.expoConfig?.version ?? '1.0.0';
-const APP_NAME = Constants.expoConfig?.name ?? 'Kiddo Delivery Partner';
-
-const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack }) => {
+const SettingsScreen: React.FC = () => {
+  const navigation = useNavigation();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
 
   useEffect(() => {
@@ -36,19 +35,19 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack }) => {
 
   const handleClearCache = () => {
     Alert.alert(
-      'Clear order cache',
-      'This will clear cached order data. Orders will load fresh from the server next time. Continue?',
+      "Clear order cache",
+      "This will clear cached order data. Orders will load fresh from the server next time. Continue?",
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: "Cancel", style: "cancel" },
         {
-          text: 'Clear',
-          style: 'destructive',
+          text: "Clear",
+          style: "destructive",
           onPress: async () => {
             await storageService.clearCachedOrders();
-            Alert.alert('Done', 'Order cache cleared.');
+            Alert.alert("Done", "Order cache cleared.");
           },
         },
-      ]
+      ],
     );
   };
 
@@ -58,10 +57,16 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack }) => {
 
       {/* Header - title centered */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.iconButton} onPress={onBack} activeOpacity={0.8}>
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.8}
+        >
           <Ionicons name="arrow-back" size={22} color="#000" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>Setting</Text>
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          Settings
+        </Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -84,8 +89,13 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack }) => {
             <Switch
               value={notificationsEnabled}
               onValueChange={handleNotificationsToggle}
-              trackColor={{ false: '#ccc', true: theme.colors.success }}
+              trackColor={{ false: "#ccc", true: theme.colors.success }}
               thumbColor="#fff"
+              style={
+                Platform.OS === "android"
+                  ? { transform: [{ scaleX: 1.2 }, { scaleY: 1.2 }] }
+                  : undefined
+              }
             />
           </View>
           <View style={styles.rowDivider} />
@@ -101,11 +111,17 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack }) => {
               style={styles.settingIcon}
             />
             <Text style={styles.settingLabel}>Clear order cache</Text>
-            <Ionicons name="chevron-forward" size={20} color={theme.colors.success} />
+            <Ionicons
+              name="chevron-forward"
+              size={20}
+              color={theme.colors.success}
+            />
           </TouchableOpacity>
         </View>
 
-        <Text style={[styles.sectionTitle, styles.aboutSectionTitle]}>About</Text>
+        <Text style={[styles.sectionTitle, styles.aboutSectionTitle]}>
+          About
+        </Text>
         <View style={styles.settingsCard}>
           <View style={[styles.settingRow, styles.aboutRow]}>
             <Ionicons
@@ -135,26 +151,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 48,
     paddingBottom: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255,255,255,0.12)',
+    borderBottomColor: "rgba(255,255,255,0.12)",
   },
   iconButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#E5E5E5',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#E5E5E5",
+    alignItems: "center",
+    justifyContent: "center",
   },
   headerTitle: {
     flex: 1,
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#fff',
-    textAlign: 'center',
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#fff",
+    textAlign: "center",
   },
   headerSpacer: {
     width: 40,
@@ -168,27 +184,25 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   sectionTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.6)',
-    marginBottom: 8,
+    fontSize: 18,
+    fontWeight: "700",
+    color: theme.colors.textLight,
+    marginBottom: 16,
     marginLeft: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   aboutSectionTitle: {
     marginTop: 28,
   },
   settingsCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: theme.colors.success,
-    overflow: 'hidden',
+    borderColor: "rgba(255,255,255,0.1)",
+    overflow: "hidden",
   },
   settingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 14,
     paddingHorizontal: 16,
   },
@@ -198,12 +212,12 @@ const styles = StyleSheet.create({
   settingLabel: {
     flex: 1,
     fontSize: 16,
-    fontWeight: '500',
-    color: '#111',
+    fontWeight: "500",
+    color: "#fff",
   },
   rowDivider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: 'rgba(0,0,0,0.08)',
+    backgroundColor: "rgba(255,255,255,0.1)",
     marginLeft: 50,
   },
   aboutRow: {
@@ -214,12 +228,12 @@ const styles = StyleSheet.create({
   },
   aboutAppName: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#111',
+    fontWeight: "600",
+    color: "#fff",
   },
   versionText: {
     fontSize: 13,
-    color: '#666',
+    color: "rgba(255,255,255,0.5)",
     marginTop: 2,
   },
 });

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  Switch,
   Linking,
   Image,
   Platform,
@@ -16,10 +15,17 @@ import {
   PanResponder,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
+import { Ionicons, FontAwesome5, Entypo } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import { getOrderDetails, updateOrderStatus, syncShopifyOrderToFirestore } from "../services/orderService";
+import {
+  getOrderDetails,
+  updateOrderStatus,
+  syncShopifyOrderToFirestore,
+} from "../services/orderService";
 import LoadingScreen from "../components/LoadingScreen";
 import {
   markOrderAsPickedUp,
@@ -42,17 +48,32 @@ import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
-interface OrderDetailsScreenProps {
-  orderId: string;
-  phoneNumber?: string;
-  onBack?: () => void;
-}
+import {
+  useNavigation,
+  useRoute,
+  RouteProp,
+  useFocusEffect,
+} from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { useAppContext } from "../context/AppContext";
+import { RootStackParamList } from "../navigation/RootNavigator";
 
-const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
-  orderId,
-  phoneNumber,
-  onBack,
-}) => {
+type OrderDetailsScreenNavigationProp = NativeStackNavigationProp<
+  RootStackParamList,
+  "OrderDetails"
+>;
+type OrderDetailsScreenRouteProp = RouteProp<
+  RootStackParamList,
+  "OrderDetails"
+>;
+
+const OrderDetailsScreen: React.FC = () => {
+  const { phoneNumber } = useAppContext();
+  const navigation = useNavigation<OrderDetailsScreenNavigationProp>();
+  const route = useRoute<OrderDetailsScreenRouteProp>();
+  const { orderId } = route.params;
+
+  const onBack = () => navigation.goBack();
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +81,9 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
   const [isInProgress, setIsInProgress] = useState(false);
   const [isDelivered, setIsDelivered] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
-  const [currentDeliveryStatus, setCurrentDeliveryStatus] = useState<string | null>(null);
+  const [currentDeliveryStatus, setCurrentDeliveryStatus] = useState<
+    string | null
+  >(null);
   const [showSuccessScreen, setShowSuccessScreen] = useState(false);
   const [destinationCoords, setDestinationCoords] = useState<{
     latitude: number;
@@ -72,7 +95,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
   const [isBottomSheetCollapsed, setIsBottomSheetCollapsed] = useState(true); // Start collapsed
   const [isContactExpanded, setIsContactExpanded] = useState(false); // Contact section collapsed by default
   const bottomSheetHeight = useRef(
-    new Animated.Value(120) // Start with collapsed height
+    new Animated.Value(120), // Start with collapsed height
   ).current;
   const dragY = useRef(120);
 
@@ -104,7 +127,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
         // Clamp between min and max heights
         const clampedHeight = Math.max(
           COLLAPSED_HEIGHT,
-          Math.min(EXPANDED_HEIGHT, newHeight)
+          Math.min(EXPANDED_HEIGHT, newHeight),
         );
 
         bottomSheetHeight.setValue(clampedHeight);
@@ -135,12 +158,14 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
         setIsBottomSheetCollapsed(willBeCollapsed);
         dragY.current = targetHeight;
       },
-    })
+    }),
   ).current;
 
-  useEffect(() => {
-    loadOrderDetails();
-  }, [orderId]);
+  useFocusEffect(
+    useCallback(() => {
+      loadOrderDetails();
+    }, [orderId]),
+  );
 
   const loadOrderDetails = async () => {
     try {
@@ -153,7 +178,9 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
 
       // Step 2: If not found in Firestore, fetch from Shopify and sync
       if (!result.success || !result.data) {
-        console.log(`[Order Details] Order not in Firestore, fetching from Shopify: ${orderId}`);
+        console.log(
+          `[Order Details] Order not in Firestore, fetching from Shopify: ${orderId}`,
+        );
         const shopifyResult = await getShopifyOrderById(orderId);
 
         if (shopifyResult.success && shopifyResult.data) {
@@ -179,8 +206,8 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
         const status = (result.data as any).status || "PENDING";
         setIsPickedUp(
           status === "PICKED_UP" ||
-          status === "IN_TRANSIT" ||
-          status === "DELIVERED"
+            status === "IN_TRANSIT" ||
+            status === "DELIVERED",
         );
         setIsInProgress(status === "IN_TRANSIT" || status === "DELIVERED");
         setIsDelivered(status === "DELIVERED");
@@ -190,27 +217,36 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
 
         // Get current delivery status from Shopify metafield
         const shopifyOrderId = (result.data as any).shopifyOrderId || orderId;
-        const deliveryStatusResult = await getDeliveryStatusFromMetafield(shopifyOrderId);
-        if (deliveryStatusResult.success && deliveryStatusResult.data?.deliveryStatus) {
+        const deliveryStatusResult =
+          await getDeliveryStatusFromMetafield(shopifyOrderId);
+        if (
+          deliveryStatusResult.success &&
+          deliveryStatusResult.data?.deliveryStatus
+        ) {
           setCurrentDeliveryStatus(deliveryStatusResult.data.deliveryStatus);
           console.log(
-            `✅ [Order Details] Current delivery status from Shopify: ${deliveryStatusResult.data.deliveryStatus}`
+            `✅ [Order Details] Current delivery status from Shopify: ${deliveryStatusResult.data.deliveryStatus}`,
           );
         } else {
           // If delivery status column is empty, try to sync from tags
           console.log(
-            `⚠️ [Order Details] Delivery status column is empty, attempting to sync from tags...`
+            `⚠️ [Order Details] Delivery status column is empty, attempting to sync from tags...`,
           );
-          const syncResult = await syncDeliveryStatusFromExistingTags(shopifyOrderId);
-          if (syncResult.success && syncResult.data?.synced && syncResult.data?.status) {
+          const syncResult =
+            await syncDeliveryStatusFromExistingTags(shopifyOrderId);
+          if (
+            syncResult.success &&
+            syncResult.data?.synced &&
+            syncResult.data?.status
+          ) {
             setCurrentDeliveryStatus(syncResult.data.status);
             console.log(
-              `✅ [Order Details] Successfully synced delivery status from tags: ${syncResult.data.status}`
+              `✅ [Order Details] Successfully synced delivery status from tags: ${syncResult.data.status}`,
             );
           } else {
             console.warn(
               `⚠️ [Order Details] Could not sync delivery status from tags:`,
-              syncResult.error || "No delivery status found in tags"
+              syncResult.error || "No delivery status found in tags",
             );
           }
         }
@@ -328,7 +364,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
     const encoded = encodeURIComponent(address);
     const url = `https://maps.google.com/?q=${encoded}`;
     Linking.openURL(url).catch((err) =>
-      console.error("Error opening maps:", err)
+      console.error("Error opening maps:", err),
     );
   };
 
@@ -354,59 +390,82 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
           shopifyOrderId = orderId;
         }
       }
-      console.log(`[Status Update] Updating PICKED_UP for Shopify order: ${shopifyOrderId}`);
+      console.log(
+        `[Status Update] Updating PICKED_UP for Shopify order: ${shopifyOrderId}`,
+      );
       console.log(`[Status Update] Order object:`, {
         shopifyOrderId: (order as any).shopifyOrderId,
         orderId,
-        shopifyOrderName: (order as any).shopifyOrderName
+        shopifyOrderName: (order as any).shopifyOrderName,
       });
 
       const shopifyUpdates = value
         ? (async () => {
-          const [deliveryStatusResult, shopifyResult] =
-            await Promise.allSettled([
-              updateDeliveryStatus(shopifyOrderId, "PICKED_UP"),
-              markOrderAsPickedUp(shopifyOrderId),
-            ]);
+            const [deliveryStatusResult, shopifyResult] =
+              await Promise.allSettled([
+                updateDeliveryStatus(shopifyOrderId, "PICKED_UP"),
+                markOrderAsPickedUp(shopifyOrderId),
+              ]);
 
-          const errors: string[] = [];
-          if (
-            deliveryStatusResult.status === "rejected" ||
-            (deliveryStatusResult.status === "fulfilled" &&
-              !deliveryStatusResult.value.success)
-          ) {
-            const errorMsg = deliveryStatusResult.status === "rejected"
-              ? deliveryStatusResult.reason?.message || String(deliveryStatusResult.reason)
-              : deliveryStatusResult.value.error || "Unknown error";
-            errors.push(`Delivery status: ${errorMsg}`);
-            console.error(`[Shopify Update] Failed to update delivery status:`, errorMsg);
-          } else if (deliveryStatusResult.status === "fulfilled" && deliveryStatusResult.value.success) {
-            console.log(`[Shopify Update] ✅ Successfully updated delivery status to PICKED_UP`);
-          }
+            const errors: string[] = [];
+            if (
+              deliveryStatusResult.status === "rejected" ||
+              (deliveryStatusResult.status === "fulfilled" &&
+                !deliveryStatusResult.value.success)
+            ) {
+              const errorMsg =
+                deliveryStatusResult.status === "rejected"
+                  ? deliveryStatusResult.reason?.message ||
+                    String(deliveryStatusResult.reason)
+                  : deliveryStatusResult.value.error || "Unknown error";
+              errors.push(`Delivery status: ${errorMsg}`);
+              console.error(
+                `[Shopify Update] Failed to update delivery status:`,
+                errorMsg,
+              );
+            } else if (
+              deliveryStatusResult.status === "fulfilled" &&
+              deliveryStatusResult.value.success
+            ) {
+              console.log(
+                `[Shopify Update] ✅ Successfully updated delivery status to PICKED_UP`,
+              );
+            }
 
-          if (
-            shopifyResult.status === "rejected" ||
-            (shopifyResult.status === "fulfilled" &&
-              !shopifyResult.value.success)
-          ) {
-            const errorMsg = shopifyResult.status === "rejected"
-              ? shopifyResult.reason?.message || String(shopifyResult.reason)
-              : shopifyResult.value.error || "Unknown error";
-            errors.push(`Tag: ${errorMsg}`);
-            console.error(`[Shopify Update] Failed to update order tag:`, errorMsg);
-          } else if (shopifyResult.status === "fulfilled" && shopifyResult.value.success) {
-            console.log(`[Shopify Update] ✅ Successfully updated order tag`);
-          }
+            if (
+              shopifyResult.status === "rejected" ||
+              (shopifyResult.status === "fulfilled" &&
+                !shopifyResult.value.success)
+            ) {
+              const errorMsg =
+                shopifyResult.status === "rejected"
+                  ? shopifyResult.reason?.message ||
+                    String(shopifyResult.reason)
+                  : shopifyResult.value.error || "Unknown error";
+              errors.push(`Tag: ${errorMsg}`);
+              console.error(
+                `[Shopify Update] Failed to update order tag:`,
+                errorMsg,
+              );
+            } else if (
+              shopifyResult.status === "fulfilled" &&
+              shopifyResult.value.success
+            ) {
+              console.log(`[Shopify Update] ✅ Successfully updated order tag`);
+            }
 
-          if (errors.length > 0) {
-            console.warn("[Shopify Update] Some Shopify updates failed:", errors);
-            Alert.alert(
-              "Shopify Update Warning",
-              `Some updates failed:\n${errors.join("\n")}\n\nOrder status updated locally.`
-            );
-          }
-          return { errors, success: errors.length === 0 };
-        })()
+            if (errors.length > 0) {
+              console.warn(
+                "[Shopify Update] Some Shopify updates failed:",
+                errors,
+              );
+              Alert.alert(
+                "Shopify Update Warning",
+                `Some updates failed:\n${errors.join("\n")}\n\nOrder status updated locally.`,
+              );
+            }
+            return { errors, success: errors.length === 0 };
+          })()
         : Promise.resolve({ errors: [], success: true });
 
       const firestoreUpdate = updateOrderStatus(orderId, newStatus);
@@ -417,11 +476,12 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
 
       // Refresh delivery status from Shopify after update
       try {
-        const deliveryStatusResult = await getDeliveryStatusFromMetafield(shopifyOrderId);
+        const deliveryStatusResult =
+          await getDeliveryStatusFromMetafield(shopifyOrderId);
         if (deliveryStatusResult.success && deliveryStatusResult.data) {
           setCurrentDeliveryStatus(deliveryStatusResult.data.deliveryStatus);
           console.log(
-            `✅ [Order Details] Refreshed delivery status: ${deliveryStatusResult.data.deliveryStatus || "Not set"}`
+            `✅ [Order Details] Refreshed delivery status: ${deliveryStatusResult.data.deliveryStatus || "Not set"}`,
           );
         }
       } catch (err) {
@@ -453,7 +513,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
         "Success",
         value
           ? 'Order marked as picked up. When you start delivery, toggle "In Progress".'
-          : "Order status updated"
+          : "Order status updated",
       );
     } catch (err: any) {
       console.error("Error updating order status:", err);
@@ -495,59 +555,82 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
           shopifyOrderId = orderId;
         }
       }
-      console.log(`[Status Update] Updating IN_TRANSIT for Shopify order: ${shopifyOrderId}`);
+      console.log(
+        `[Status Update] Updating IN_TRANSIT for Shopify order: ${shopifyOrderId}`,
+      );
       console.log(`[Status Update] Order object:`, {
         shopifyOrderId: (order as any).shopifyOrderId,
         orderId,
-        shopifyOrderName: (order as any).shopifyOrderName
+        shopifyOrderName: (order as any).shopifyOrderName,
       });
 
       const shopifyUpdates = value
         ? (async () => {
-          const [deliveryStatusResult, shopifyResult] =
-            await Promise.allSettled([
-              updateDeliveryStatus(shopifyOrderId, "IN_TRANSIT"),
-              markOrderAsInProgress(shopifyOrderId),
-            ]);
+            const [deliveryStatusResult, shopifyResult] =
+              await Promise.allSettled([
+                updateDeliveryStatus(shopifyOrderId, "IN_TRANSIT"),
+                markOrderAsInProgress(shopifyOrderId),
+              ]);
 
-          const errors: string[] = [];
-          if (
-            deliveryStatusResult.status === "rejected" ||
-            (deliveryStatusResult.status === "fulfilled" &&
-              !deliveryStatusResult.value.success)
-          ) {
-            const errorMsg = deliveryStatusResult.status === "rejected"
-              ? deliveryStatusResult.reason?.message || String(deliveryStatusResult.reason)
-              : deliveryStatusResult.value.error || "Unknown error";
-            errors.push(`Delivery status: ${errorMsg}`);
-            console.error(`[Shopify Update] Failed to update delivery status:`, errorMsg);
-          } else if (deliveryStatusResult.status === "fulfilled" && deliveryStatusResult.value.success) {
-            console.log(`[Shopify Update] ✅ Successfully updated delivery status to IN_TRANSIT`);
-          }
+            const errors: string[] = [];
+            if (
+              deliveryStatusResult.status === "rejected" ||
+              (deliveryStatusResult.status === "fulfilled" &&
+                !deliveryStatusResult.value.success)
+            ) {
+              const errorMsg =
+                deliveryStatusResult.status === "rejected"
+                  ? deliveryStatusResult.reason?.message ||
+                    String(deliveryStatusResult.reason)
+                  : deliveryStatusResult.value.error || "Unknown error";
+              errors.push(`Delivery status: ${errorMsg}`);
+              console.error(
+                `[Shopify Update] Failed to update delivery status:`,
+                errorMsg,
+              );
+            } else if (
+              deliveryStatusResult.status === "fulfilled" &&
+              deliveryStatusResult.value.success
+            ) {
+              console.log(
+                `[Shopify Update] ✅ Successfully updated delivery status to IN_TRANSIT`,
+              );
+            }
 
-          if (
-            shopifyResult.status === "rejected" ||
-            (shopifyResult.status === "fulfilled" &&
-              !shopifyResult.value.success)
-          ) {
-            const errorMsg = shopifyResult.status === "rejected"
-              ? shopifyResult.reason?.message || String(shopifyResult.reason)
-              : shopifyResult.value.error || "Unknown error";
-            errors.push(`Tag: ${errorMsg}`);
-            console.error(`[Shopify Update] Failed to update order tag:`, errorMsg);
-          } else if (shopifyResult.status === "fulfilled" && shopifyResult.value.success) {
-            console.log(`[Shopify Update] ✅ Successfully updated order tag`);
-          }
+            if (
+              shopifyResult.status === "rejected" ||
+              (shopifyResult.status === "fulfilled" &&
+                !shopifyResult.value.success)
+            ) {
+              const errorMsg =
+                shopifyResult.status === "rejected"
+                  ? shopifyResult.reason?.message ||
+                    String(shopifyResult.reason)
+                  : shopifyResult.value.error || "Unknown error";
+              errors.push(`Tag: ${errorMsg}`);
+              console.error(
+                `[Shopify Update] Failed to update order tag:`,
+                errorMsg,
+              );
+            } else if (
+              shopifyResult.status === "fulfilled" &&
+              shopifyResult.value.success
+            ) {
+              console.log(`[Shopify Update] ✅ Successfully updated order tag`);
+            }
 
-          if (errors.length > 0) {
-            console.warn("[Shopify Update] Some Shopify updates failed:", errors);
-            Alert.alert(
-              "Shopify Update Warning",
-              `Some updates failed:\n${errors.join("\n")}\n\nOrder status updated locally.`
-            );
-          }
-          return { errors, success: errors.length === 0 };
-        })()
+            if (errors.length > 0) {
+              console.warn(
+                "[Shopify Update] Some Shopify updates failed:",
+                errors,
+              );
+              Alert.alert(
+                "Shopify Update Warning",
+                `Some updates failed:\n${errors.join("\n")}\n\nOrder status updated locally.`,
+              );
+            }
+            return { errors, success: errors.length === 0 };
+          })()
         : Promise.resolve({ errors: [], success: true });
 
       const firestoreUpdate = updateOrderStatus(orderId, newStatus);
@@ -558,11 +641,12 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
 
       // Refresh delivery status from Shopify after update
       try {
-        const deliveryStatusResult = await getDeliveryStatusFromMetafield(shopifyOrderId);
+        const deliveryStatusResult =
+          await getDeliveryStatusFromMetafield(shopifyOrderId);
         if (deliveryStatusResult.success && deliveryStatusResult.data) {
           setCurrentDeliveryStatus(deliveryStatusResult.data.deliveryStatus);
           console.log(
-            `✅ [Order Details] Refreshed delivery status: ${deliveryStatusResult.data.deliveryStatus || "Not set"}`
+            `✅ [Order Details] Refreshed delivery status: ${deliveryStatusResult.data.deliveryStatus || "Not set"}`,
           );
         }
       } catch (err) {
@@ -593,16 +677,18 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
       if (value) {
         const shippingAddress = order.shopifyData?.shippingAddress;
         if (shippingAddress?.address1) {
-          const fullAddress = `${shippingAddress.address1}, ${shippingAddress.city || ""
-            } ${shippingAddress.province || ""} ${shippingAddress.zip || ""
-            }`.trim();
+          const fullAddress = `${shippingAddress.address1}, ${
+            shippingAddress.city || ""
+          } ${shippingAddress.province || ""} ${
+            shippingAddress.zip || ""
+          }`.trim();
           openMaps(fullAddress);
         }
       }
 
       Alert.alert(
         "Success",
-        value ? "Order marked as in progress" : "Order status updated"
+        value ? "Order marked as in progress" : "Order status updated",
       );
     } catch (err: any) {
       console.error("Error updating order status:", err);
@@ -635,83 +721,117 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
 
       // Get Shopify order ID - prefer shopifyOrderId from order, fallback to orderId
       const shopifyOrderId = (order as any).shopifyOrderId || orderId;
-      console.log(`[Status Update] Updating DELIVERED for Shopify order: ${shopifyOrderId}`);
+      console.log(
+        `[Status Update] Updating DELIVERED for Shopify order: ${shopifyOrderId}`,
+      );
 
       const shopifyUpdates = value
         ? (async () => {
-          const updateErrors: string[] = [];
+            const updateErrors: string[] = [];
 
-          const [deliveryStatusResult, shopifyTagResult, paidResult] =
-            await Promise.allSettled([
-              updateDeliveryStatus(shopifyOrderId, "DELIVERED"),
-              markOrderAsDelivered(shopifyOrderId),
-              (async () => {
-                const financialStatus =
-                  order.shopifyData?.displayFinancialStatus;
-                if (
-                  financialStatus &&
-                  financialStatus !== "PAID" &&
-                  financialStatus !== "AUTHORIZED"
-                ) {
-                  return await markCodOrderAsPaid(shopifyOrderId);
-                }
-                return { success: true };
-              })(),
-            ]);
+            const [deliveryStatusResult, shopifyTagResult, paidResult] =
+              await Promise.allSettled([
+                updateDeliveryStatus(shopifyOrderId, "DELIVERED"),
+                markOrderAsDelivered(shopifyOrderId),
+                (async () => {
+                  const financialStatus =
+                    order.shopifyData?.displayFinancialStatus;
+                  if (
+                    financialStatus &&
+                    financialStatus !== "PAID" &&
+                    financialStatus !== "AUTHORIZED"
+                  ) {
+                    return await markCodOrderAsPaid(shopifyOrderId);
+                  }
+                  return { success: true };
+                })(),
+              ]);
 
-          if (
-            deliveryStatusResult.status === "rejected" ||
-            (deliveryStatusResult.status === "fulfilled" &&
-              !deliveryStatusResult.value.success)
-          ) {
-            const errorMsg = deliveryStatusResult.status === "rejected"
-              ? deliveryStatusResult.reason?.message || String(deliveryStatusResult.reason)
-              : deliveryStatusResult.value.error || "Unknown error";
-            updateErrors.push(`Delivery status: ${errorMsg}`);
-            console.error(`[Shopify Update] Failed to update delivery status:`, errorMsg);
-          } else if (deliveryStatusResult.status === "fulfilled" && deliveryStatusResult.value.success) {
-            console.log(`[Shopify Update] ✅ Successfully updated delivery status to DELIVERED`);
-          }
+            if (
+              deliveryStatusResult.status === "rejected" ||
+              (deliveryStatusResult.status === "fulfilled" &&
+                !deliveryStatusResult.value.success)
+            ) {
+              const errorMsg =
+                deliveryStatusResult.status === "rejected"
+                  ? deliveryStatusResult.reason?.message ||
+                    String(deliveryStatusResult.reason)
+                  : deliveryStatusResult.value.error || "Unknown error";
+              updateErrors.push(`Delivery status: ${errorMsg}`);
+              console.error(
+                `[Shopify Update] Failed to update delivery status:`,
+                errorMsg,
+              );
+            } else if (
+              deliveryStatusResult.status === "fulfilled" &&
+              deliveryStatusResult.value.success
+            ) {
+              console.log(
+                `[Shopify Update] ✅ Successfully updated delivery status to DELIVERED`,
+              );
+            }
 
-          if (
-            shopifyTagResult.status === "rejected" ||
-            (shopifyTagResult.status === "fulfilled" &&
-              !shopifyTagResult.value.success)
-          ) {
-            const errorMsg = shopifyTagResult.status === "rejected"
-              ? shopifyTagResult.reason?.message || String(shopifyTagResult.reason)
-              : shopifyTagResult.value.error || "Unknown error";
-            updateErrors.push(`Tag: ${errorMsg}`);
-            console.error(`[Shopify Update] Failed to update order tag:`, errorMsg);
-          } else if (shopifyTagResult.status === "fulfilled" && shopifyTagResult.value.success) {
-            console.log(`[Shopify Update] ✅ Successfully updated order tag`);
-          }
+            if (
+              shopifyTagResult.status === "rejected" ||
+              (shopifyTagResult.status === "fulfilled" &&
+                !shopifyTagResult.value.success)
+            ) {
+              const errorMsg =
+                shopifyTagResult.status === "rejected"
+                  ? shopifyTagResult.reason?.message ||
+                    String(shopifyTagResult.reason)
+                  : shopifyTagResult.value.error || "Unknown error";
+              updateErrors.push(`Tag: ${errorMsg}`);
+              console.error(
+                `[Shopify Update] Failed to update order tag:`,
+                errorMsg,
+              );
+            } else if (
+              shopifyTagResult.status === "fulfilled" &&
+              shopifyTagResult.value.success
+            ) {
+              console.log(`[Shopify Update] ✅ Successfully updated order tag`);
+            }
 
-          if (
-            paidResult.status === "rejected" ||
-            (paidResult.status === "fulfilled" && !paidResult.value.success)
-          ) {
-            const errorMsg = paidResult.status === "rejected"
-              ? paidResult.reason?.message || String(paidResult.reason)
-              : paidResult.value.error || "Unknown error";
-            updateErrors.push(`Payment: ${errorMsg}`);
-            console.error(`[Shopify Update] Failed to mark COD as paid:`, errorMsg);
-          } else if (paidResult.status === "fulfilled" && paidResult.value.success) {
-            console.log(`[Shopify Update] ✅ Successfully marked COD as paid`);
-          }
+            if (
+              paidResult.status === "rejected" ||
+              (paidResult.status === "fulfilled" && !paidResult.value.success)
+            ) {
+              const errorMsg =
+                paidResult.status === "rejected"
+                  ? paidResult.reason?.message || String(paidResult.reason)
+                  : paidResult.value.error || "Unknown error";
+              updateErrors.push(`Payment: ${errorMsg}`);
+              console.error(
+                `[Shopify Update] Failed to mark COD as paid:`,
+                errorMsg,
+              );
+            } else if (
+              paidResult.status === "fulfilled" &&
+              paidResult.value.success
+            ) {
+              console.log(
+                `[Shopify Update] ✅ Successfully marked COD as paid`,
+              );
+            }
 
-          if (updateErrors.length > 0) {
-            console.warn("[Shopify Update] Some Shopify updates failed:", updateErrors);
-            Alert.alert(
-              "Shopify Update Warning",
-              `Some updates failed:\n${updateErrors.join("\n")}\n\nOrder status updated locally.`
-            );
-          } else {
-            console.log(`[Shopify Update] ✅ All Shopify updates completed successfully`);
-          }
+            if (updateErrors.length > 0) {
+              console.warn(
+                "[Shopify Update] Some Shopify updates failed:",
+                updateErrors,
+              );
+              Alert.alert(
+                "Shopify Update Warning",
+                `Some updates failed:\n${updateErrors.join("\n")}\n\nOrder status updated locally.`,
+              );
+            } else {
+              console.log(
+                `[Shopify Update] ✅ All Shopify updates completed successfully`,
+              );
+            }
 
-          return { errors: updateErrors };
-        })()
+            return { errors: updateErrors };
+          })()
         : Promise.resolve({ errors: [] });
 
       const firestoreUpdate = updateOrderStatus(orderId, newStatus);
@@ -722,11 +842,12 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
 
       // Refresh delivery status from Shopify after update
       try {
-        const deliveryStatusResult = await getDeliveryStatusFromMetafield(shopifyOrderId);
+        const deliveryStatusResult =
+          await getDeliveryStatusFromMetafield(shopifyOrderId);
         if (deliveryStatusResult.success && deliveryStatusResult.data) {
           setCurrentDeliveryStatus(deliveryStatusResult.data.deliveryStatus);
           console.log(
-            `✅ [Order Details] Refreshed delivery status: ${deliveryStatusResult.data.deliveryStatus || "Not set"}`
+            `✅ [Order Details] Refreshed delivery status: ${deliveryStatusResult.data.deliveryStatus || "Not set"}`,
           );
         }
       } catch (err) {
@@ -761,7 +882,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
         if (shopifyErrors.length > 0) {
           console.warn(
             "Order updated but some Shopify updates failed:",
-            shopifyErrors
+            shopifyErrors,
           );
         }
       } else {
@@ -771,7 +892,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
           });
           console.warn(
             "Order updated but some Shopify updates failed:",
-            shopifyErrors
+            shopifyErrors,
           );
         } else {
           Alert.alert("Success", "Order status updated");
@@ -858,7 +979,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
       console.error("Error making phone call:", err);
       Alert.alert(
         "Error",
-        "Unable to make phone call. Please check if your device supports phone calls."
+        "Unable to make phone call. Please check if your device supports phone calls.",
       );
     });
   };
@@ -883,7 +1004,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
 
   const handleMessage = (phoneNumber: string) => {
     Linking.openURL(`sms:${phoneNumber}`).catch(() => {
-      Alert.alert('Error', 'Unable to open messaging app');
+      Alert.alert("Error", "Unable to open messaging app");
     });
   };
 
@@ -899,7 +1020,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
     "DELIVERED",
   ].includes(orderStatus);
   const isPickedUpOrLater = ["PICKED_UP", "IN_TRANSIT", "DELIVERED"].includes(
-    orderStatus
+    orderStatus,
   );
   const isInProgressOrLater = ["IN_TRANSIT", "DELIVERED"].includes(orderStatus);
   const isOrderDelivered = orderStatus === "DELIVERED";
@@ -925,14 +1046,17 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
   estimatedDate.setDate(estimatedDate.getDate() + 1);
 
   // Get customer name (support both camelCase and REST API snake_case)
-  const firstName = shippingAddress.firstName ?? (shippingAddress as any).first_name ?? "";
-  const lastName = shippingAddress.lastName ?? (shippingAddress as any).last_name ?? "";
-  const customerName = [firstName, lastName].filter(Boolean).join(" ").trim() || "Customer";
+  const firstName =
+    shippingAddress.firstName ?? (shippingAddress as any).first_name ?? "";
+  const lastName =
+    shippingAddress.lastName ?? (shippingAddress as any).last_name ?? "";
+  const customerName =
+    [firstName, lastName].filter(Boolean).join(" ").trim() || "Customer";
 
   // Calculate total quantity and weight (placeholder)
   const totalQuantity = lineItems.reduce(
     (sum: number, item: any) => sum + (item.node?.quantity || 0),
-    0
+    0,
   );
   const totalWeight = `${totalQuantity * 2} Kg`; // Placeholder calculation
 
@@ -940,61 +1064,49 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
   const getStatusDisplay = () => {
     switch (orderStatus) {
       case "ASSIGNED":
+        return "Assigned";
       case "PICKED_UP":
-        return "Transit";
+        return "Picked Up";
       case "IN_TRANSIT":
         return "In Transit";
       case "DELIVERED":
         return "Delivered";
+      case "RETURNED":
+        return "Returned";
       default:
-        return "Pending";
+        return "Assigned";
     }
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
+    <View style={styles.container}>
       <StatusBar style="light" />
 
-      {/* Top Header with Back Button and Map Type Selector - Over map */}
-      <View style={[styles.topHeader, { top: insets.top + 12 }]}>
-        <TouchableOpacity onPress={onBack} style={styles.backButtonHeader}>
-          <Text style={styles.backButtonIcon}>←</Text>
+      {/* Top Header with Back Button, Order ID, and Map Button */}
+      <View style={[styles.topHeader, { top: insets.top + 10 }]}>
+        <TouchableOpacity onPress={onBack} style={styles.headerCircleButton}>
+          <Ionicons name="arrow-back" size={24} color={theme.colors.primary} />
         </TouchableOpacity>
 
-        <View style={styles.mapTypeSelector}>
-          <TouchableOpacity
-            style={[
-              styles.mapTypeButton,
-              mapType === "standard" && styles.mapTypeButtonActive,
-            ]}
-            onPress={() => setMapType("standard")}
-          >
-            <Text
-              style={[
-                styles.mapTypeButtonText,
-                mapType === "standard" && styles.mapTypeButtonTextActive,
-              ]}
-            >
-              Map
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.mapTypeButton,
-              mapType === "satellite" && styles.mapTypeButtonActive,
-            ]}
-            onPress={() => setMapType("satellite")}
-          >
-            <Text
-              style={[
-                styles.mapTypeButtonText,
-                mapType === "satellite" && styles.mapTypeButtonTextActive,
-              ]}
-            >
-              Satellite
-            </Text>
-          </TouchableOpacity>
+        <View style={styles.orderIdPill}>
+          <Text style={styles.orderIdText}>
+            {order?.shopifyOrderName || orderId?.slice(-4) || "Order"}
+          </Text>
         </View>
+
+        <TouchableOpacity
+          onPress={() => {
+            const scheme = Platform.select({ ios: "maps:", android: "geo:" });
+            const url = Platform.select({
+              ios: `maps:0,0?q=${order?.shopifyData?.shippingAddress?.address1}`,
+              android: `geo:0,0?q=${order?.shopifyData?.shippingAddress?.address1}`,
+            });
+            if (url) Linking.openURL(url);
+          }}
+          style={styles.headerCircleButton}
+        >
+          <Ionicons name="map-outline" size={24} color={theme.colors.primary} />
+        </TouchableOpacity>
       </View>
 
       {/* Map View */}
@@ -1028,7 +1140,12 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
             pinColor={theme.colors.success}
           >
             <View style={styles.markerContainer}>
-              <View style={[styles.markerCircle, { backgroundColor: theme.colors.success }]}>
+              <View
+                style={[
+                  styles.markerCircle,
+                  { backgroundColor: theme.colors.success },
+                ]}
+              >
                 <Text style={styles.markerEmoji}>🏠</Text>
               </View>
             </View>
@@ -1040,11 +1157,19 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
               <Marker
                 coordinate={destinationCoords}
                 title="Delivery Address"
-                description={order?.shopifyData?.shippingAddress?.address1 || "Customer Location"}
+                description={
+                  order?.shopifyData?.shippingAddress?.address1 ||
+                  "Customer Location"
+                }
                 pinColor="#FF6B35"
               >
                 <View style={styles.markerContainer}>
-                  <View style={[styles.markerCircle, { backgroundColor: "#FF6B35" }]}>
+                  <View
+                    style={[
+                      styles.markerCircle,
+                      { backgroundColor: "#FF6B35" },
+                    ]}
+                  >
                     <Text style={styles.markerEmoji}>📍</Text>
                   </View>
                 </View>
@@ -1073,10 +1198,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
         ]}
       >
         {/* Handle bar - always visible; draggable when expanded */}
-        <View
-          style={styles.grabHandleContainer}
-          {...(isBottomSheetCollapsed ? {} : panResponder.panHandlers)}
-        >
+        <View style={styles.grabHandleContainer} {...panResponder.panHandlers}>
           <TouchableOpacity
             onPress={toggleBottomSheet}
             activeOpacity={0.8}
@@ -1088,30 +1210,52 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
 
         {isBottomSheetCollapsed ? (
           // Collapsed View - Minimal Content (Dropdown)
-          <TouchableOpacity
-            style={styles.collapsedContent}
-            onPress={toggleBottomSheet}
-            activeOpacity={0.8}
-          >
-            <View style={styles.collapsedRow}>
-              <View style={styles.collapsedLeft}>
-                <Text style={styles.collapsedBookingId}>
-                  {order.shopifyOrderName || orderId}
-                </Text>
-                <Text style={styles.collapsedCustomer} numberOfLines={1}>
-                  {customerName || "Customer"}
-                </Text>
-              </View>
-              <View style={styles.collapsedRight}>
-                <View style={styles.statusBadge}>
-                  <Text style={styles.statusBadgeText}>
-                    {getStatusDisplay()}
+          <View style={styles.collapsedContent} {...panResponder.panHandlers}>
+            <TouchableOpacity activeOpacity={1} onPress={toggleBottomSheet}>
+              <View style={styles.collapsedRow}>
+                <View
+                  style={[styles.collapsedLeft, { justifyContent: "center" }]}
+                >
+                  <Text style={styles.bookingLabel}>Customer</Text>
+                  <Text style={styles.collapsedBookingId} numberOfLines={1}>
+                    {customerName || "Customer"}
                   </Text>
                 </View>
-                <Text style={styles.expandHint}>Tap to expand ↓</Text>
+                <View style={styles.collapsedRight}>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <TouchableOpacity
+                      style={[
+                        styles.courierButton,
+                        {
+                          width: 40,
+                          height: 40,
+                          borderRadius: 20,
+                          marginRight: 10,
+                          backgroundColor: theme.colors.success,
+                        },
+                      ]}
+                      onPress={handleCallCustomer}
+                    >
+                      <FontAwesome5 name="phone-alt" size={18} color="white" />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.courierButton,
+                        styles.courierButtonSecondary,
+                        { width: 40, height: 40, borderRadius: 20 },
+                      ]}
+                      onPress={() =>
+                        customerPhone && handleMessage(customerPhone)
+                      }
+                    >
+                      <Entypo name="message" size={20} color="black" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
               </View>
-            </View>
-          </TouchableOpacity>
+            </TouchableOpacity>
+          </View>
         ) : (
           // Expanded View - Full Content
           <ScrollView
@@ -1122,36 +1266,79 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
             bounces={true}
           >
             {/* Booking ID and Status */}
+            {/* Customer Name and Contact Options */}
             <View style={styles.bookingRow}>
               <View style={styles.bookingIdSection}>
-                <Text style={styles.bookingLabel}>Booking Id:</Text>
-                <Text style={styles.bookingId}>
-                  {order.shopifyOrderName || orderId}
+                <Text style={styles.bookingId} numberOfLines={1}>
+                  {customerName || "Customer"}
                 </Text>
-              </View>
-              <View style={styles.statusSection}>
-                <Text style={styles.statusLabel}>Status</Text>
-                <View style={styles.statusBadge}>
-                  <Text style={styles.statusBadgeText}>
-                    {getStatusDisplay()}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "flex-start",
+                    marginTop: 4,
+                  }}
+                >
+                  <Ionicons
+                    name="location-outline"
+                    size={16}
+                    color={theme.colors.textLight}
+                    style={{ opacity: 0.7, marginRight: 4, marginTop: 2 }}
+                  />
+                  <Text
+                    style={[
+                      theme.typography.body,
+                      {
+                        color: theme.colors.textLight,
+                        opacity: 0.9,
+                        flex: 1,
+                        fontSize: 13,
+                        lineHeight: 18,
+                      },
+                    ]}
+                  >
+                    {[
+                      shippingAddress.address1,
+                      shippingAddress.address2,
+                      shippingAddress.city,
+                      shippingAddress.province,
+                      shippingAddress.zip,
+                      shippingAddress.country,
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
                   </Text>
                 </View>
+              </View>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <TouchableOpacity
+                  style={[
+                    styles.courierButton,
+                    {
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      marginRight: 10,
+                      backgroundColor: theme.colors.success,
+                    },
+                  ]}
+                  onPress={handleCallCustomer}
+                >
+                  <FontAwesome5 name="phone-alt" size={18} color="white" />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.courierButton,
+                    styles.courierButtonSecondary,
+                    { width: 40, height: 40, borderRadius: 20 },
+                  ]}
+                  onPress={() => customerPhone && handleMessage(customerPhone)}
+                >
+                  <Entypo name="message" size={20} color="black" />
+                </TouchableOpacity>
               </View>
             </View>
-
-            {/* Current Delivery Status from Shopify Metafield */}
-            {currentDeliveryStatus && (
-              <View style={styles.deliveryStatusRow}>
-                <Text style={styles.deliveryStatusLabel}>
-                  Shopify Delivery Status:
-                </Text>
-                <View style={styles.deliveryStatusBadge}>
-                  <Text style={styles.deliveryStatusText}>
-                    {currentDeliveryStatus}
-                  </Text>
-                </View>
-              </View>
-            )}
 
             {/* Progress Indicator with Circular Buttons */}
             <View style={styles.progressWrapper}>
@@ -1274,9 +1461,9 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
                   <Text style={[styles.detailValue, styles.detailValueRight]}>
                     {totalPrice.amount
                       ? formatPrice(
-                        totalPrice.amount,
-                        totalPrice.currencyCode || "$"
-                      )
+                          totalPrice.amount,
+                          totalPrice.currencyCode || "$",
+                        )
                       : "N/A"}
                   </Text>
                 </View>
@@ -1293,7 +1480,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
                 <Image
                   source={require("../../assets/Package-3d-icon.png")}
                   style={styles.packageImage}
-                // resizeMode="contain"
+                  // resizeMode="contain"
                 />
               </View>
             </View>
@@ -1303,44 +1490,7 @@ const OrderDetailsScreen: React.FC<OrderDetailsScreenProps> = ({
 
       {/* Customer Contact Section - above safe area */}
       {/* Customer Contact Section - Sticky footer when expanded */}
-      {!isBottomSheetCollapsed && (
-        <View style={[styles.courierSectionOverflow, { bottom: CONTACT_BAR_BOTTOM }]}>
-          <View style={styles.courierInfo}>
-            <View style={styles.courierAvatar}>
-              <Text style={styles.courierAvatarText}>
-                {customerPhone
-                  ? customerPhone.charAt(customerPhone.length - 1)
-                  : customerName
-                    ? customerName.charAt(0).toUpperCase()
-                    : "C"}
-              </Text>
-            </View>
-            <View style={styles.courierDetails}>
-              <Text style={styles.courierName}>
-                {customerPhone || "Phone not available"}
-              </Text>
-              <Text style={styles.courierRole}>
-                {customerName || "Customer"}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.courierActions}>
-            <TouchableOpacity
-              style={styles.courierButton}
-              onPress={handleCallCustomer}
-            >
-              <Text style={styles.courierButtonIcon}>📞</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.courierButton, styles.courierButtonSecondary]}
-              onPress={() => customerPhone && handleMessage(customerPhone)}
-            >
-              <Text style={styles.courierButtonIconSecondary}>💬</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-    </SafeAreaView>
+    </View>
   );
 };
 
@@ -1401,7 +1551,7 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
     zIndex: 1000,
   },
-  backButtonHeader: {
+  headerCircleButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -1414,10 +1564,24 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 5,
   },
-  backButtonIcon: {
-    fontSize: 20,
+  orderIdPill: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  orderIdText: {
+    ...theme.typography.h3,
     color: theme.colors.primary,
     fontWeight: "bold",
+    fontSize: 16,
   },
   mapContainer: {
     flex: 1,

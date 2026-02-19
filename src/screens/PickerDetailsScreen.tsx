@@ -15,11 +15,8 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { saveUserDetails, uploadProfileImage } from '../services/firebaseService';
-
-interface PickerDetailsScreenProps {
-  phoneNumber: string;
-  onSubmit: (details: PickerDetails) => void;
-}
+import { useAppContext } from '../context/AppContext';
+import { storageService } from '../services/storageService';
 
 export interface PickerDetails {
   fullName: string;
@@ -29,10 +26,9 @@ export interface PickerDetails {
   profilePhoto?: string;
 }
 
-const PickerDetailsScreen: React.FC<PickerDetailsScreenProps> = ({
-  phoneNumber,
-  onSubmit,
-}) => {
+const PickerDetailsScreen: React.FC = () => {
+  const { phoneNumber, setPickerDetails } = useAppContext();
+
   const [fullName, setFullName] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState<string>('');
@@ -80,6 +76,13 @@ const PickerDetailsScreen: React.FC<PickerDetailsScreenProps> = ({
       return;
     }
 
+    if (!phoneNumber) {
+      Alert.alert('Error', 'Phone number not found. Please login again.');
+      return;
+    }
+
+    setLoading(true);
+
     // Upload profile photo if selected
     let photoUrl = profilePhoto;
     if (profilePhoto) {
@@ -90,16 +93,7 @@ const PickerDetailsScreen: React.FC<PickerDetailsScreenProps> = ({
           console.log('✅ Profile photo uploaded:', photoUrl);
         } else {
           console.warn('❌ Failed to upload profile photo:', uploadResult.error);
-          Alert.alert(
-            'Image Upload Failed',
-            'Could not upload profile photo. Saving profile without image update.'
-          );
-          // Proceed without updating photo URL if upload fails? 
-          // Or maybe keep local one? No, local one is useless on other devices.
-          // Let's keep the local one locally but maybe not save it to firestore if it's invalid?
-          // Actually, if upload fails, we probably shouldn't save the local URI to Firestore as it will be broken on other devices.
-          // But for now, let's just proceed with the original flow or maybe set it to undefined if upload fails to avoid broken images.
-          // However, the user might want to try again.
+          // Proceed without photo URL update if fails (or maybe alert user?)
         }
       } catch (error) {
         console.error('Error uploading photo:', error);
@@ -114,42 +108,23 @@ const PickerDetailsScreen: React.FC<PickerDetailsScreenProps> = ({
       ...(photoUrl && { profilePhoto: photoUrl }),
     };
 
-    setLoading(true);
-
     try {
       // Save to Firebase
       const result = await saveUserDetails(phoneNumber, details);
 
-      if (result.success) {
-        // Successfully saved to Firebase, proceed with submission
-        onSubmit(details);
-      } else {
-        // Firebase save failed, but still proceed (offline support)
-        console.warn('Firebase save failed, but proceeding:', result.error);
+      // Always update local storage and context to proceed
+      await storageService.savePickerDetails(details);
+      setPickerDetails(details); // This triggers RootNavigator to switch to MainTabs
+
+      if (!result.success) {
         Alert.alert(
           'Warning',
-          'Failed to save to server, but your data will be saved locally. Please check your internet connection.',
-          [
-            {
-              text: 'Continue',
-              onPress: () => onSubmit(details),
-            },
-          ]
+          'Failed to save to server, but your data is saved locally. It will sync when online.'
         );
       }
     } catch (error: any) {
       console.error('Error in handleSubmit:', error);
-      // Even if Firebase fails, allow user to continue
-      Alert.alert(
-        'Warning',
-        'Failed to save to server, but your data will be saved locally.',
-        [
-          {
-            text: 'Continue',
-            onPress: () => onSubmit(details),
-          },
-        ]
-      );
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -435,4 +410,3 @@ const styles = StyleSheet.create({
 });
 
 export default PickerDetailsScreen;
-

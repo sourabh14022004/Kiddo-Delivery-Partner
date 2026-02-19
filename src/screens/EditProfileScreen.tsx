@@ -15,24 +15,19 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+
 import { saveUserDetails, uploadProfileImage } from '../services/firebaseService';
-import { PickerDetails } from './PickerDetailsScreen';
 import { storageService } from '../services/storageService';
 import { theme } from '../config/theme';
+import { useAppContext } from '../context/AppContext';
+import { PickerDetails } from './PickerDetailsScreen';
 
-interface EditProfileScreenProps {
-  phoneNumber: string;
-  pickerDetails: PickerDetails | null;
-  onBack: () => void;
-  onSave: (details: PickerDetails) => void;
-}
+const EditProfileScreen: React.FC = () => {
+  const { phoneNumber, pickerDetails, setPickerDetails } = useAppContext();
+  const navigation = useNavigation();
 
-const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
-  phoneNumber,
-  pickerDetails,
-  onBack,
-  onSave,
-}) => {
   const [fullName, setFullName] = useState(pickerDetails?.fullName || '');
   const [age, setAge] = useState(pickerDetails?.age || '');
   const [profilePhoto, setProfilePhoto] = useState<string | undefined>(
@@ -102,21 +97,17 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
     setLoading(true);
 
     let photoUrl = profilePhoto;
-    // Upload photo if changed and it's a local file (file:// or content://)
-    // We assume if it changed, it's a new local pick. Remote URLs start with http
+    // Upload photo if changed and it's a local file
     if (profilePhoto && profilePhoto !== originalProfilePhoto) {
       try {
         const uploadResult = await uploadProfileImage(phoneNumber, profilePhoto);
         if (uploadResult.success && uploadResult.downloadUrl) {
           photoUrl = uploadResult.downloadUrl;
-          console.log('✅ Profile photo uploaded:', photoUrl);
         } else {
-          console.warn('❌ Failed to upload profile photo:', uploadResult.error);
           Alert.alert(
             'Image Upload Failed',
-            `Could not upload profile photo: ${uploadResult.error}\n\nPlease check your internet connection and permissions.`
+            `Could not upload profile photo: ${uploadResult.error}\n\nPlease check your internet connection.`
           );
-          // Revert to original photo if upload fails to avoid saving broken local URI
           photoUrl = originalProfilePhoto;
         }
       } catch (error) {
@@ -135,18 +126,21 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
     try {
       const result = await saveUserDetails(phoneNumber, details);
 
+      // Always update local storage and context
+      await storageService.savePickerDetails(details);
+      setPickerDetails(details);
+
       if (result.success) {
-        await storageService.savePickerDetails(details);
-        onSave(details);
         if (exitAfterSave) {
           Alert.alert('Success', 'Profile updated successfully!', [
-            { text: 'OK', onPress: onBack },
+            { text: 'OK', onPress: () => navigation.goBack() },
           ]);
         } else {
           Alert.alert('Success', 'Profile updated successfully!');
         }
       } else {
-        Alert.alert('Error', result.error || 'Failed to update profile');
+        Alert.alert('Warning', 'Saved locally but failed to sync to server');
+        if (exitAfterSave) navigation.goBack();
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to update profile');
@@ -157,7 +151,7 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
 
   const handleBackPress = () => {
     if (!hasChanges) {
-      onBack();
+      navigation.goBack();
       return;
     }
     Alert.alert(
@@ -168,12 +162,7 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
         {
           text: 'Discard & Leave',
           style: 'destructive',
-          onPress: () => {
-            setFullName(originalFullName);
-            setAge(originalAge);
-            setProfilePhoto(originalProfilePhoto);
-            onBack();
-          },
+          onPress: () => navigation.goBack(),
         },
         {
           text: 'Save & Leave',
@@ -187,7 +176,7 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
     <SafeAreaView style={styles.container} edges={[]}>
       <StatusBar style="light" />
 
-      {/* Header - back left, title center, Save top right (only when changed) */}
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.iconButton} onPress={handleBackPress} activeOpacity={0.8}>
           <Ionicons name="arrow-back" size={22} color="#000" />

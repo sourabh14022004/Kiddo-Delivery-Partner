@@ -11,11 +11,8 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { theme } from '../config/theme';
-
-interface HelpSupportScreenProps {
-  onBack: () => void;
-}
 
 interface FAQItem {
   id: string;
@@ -23,7 +20,8 @@ interface FAQItem {
   answer: string;
 }
 
-const HelpSupportScreen: React.FC<HelpSupportScreenProps> = ({ onBack }) => {
+const HelpSupportScreen: React.FC = () => {
+  const navigation = useNavigation();
   const [expandedFAQ, setExpandedFAQ] = useState<string | null>(null);
 
   const faqs: FAQItem[] = [
@@ -87,7 +85,7 @@ const HelpSupportScreen: React.FC<HelpSupportScreenProps> = ({ onBack }) => {
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.iconButton} onPress={onBack}>
+        <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={22} color="#000" />
         </TouchableOpacity>
         <View style={styles.headerTitleContainer}>
@@ -351,4 +349,3 @@ const styles = StyleSheet.create({
 });
 
 export default HelpSupportScreen;
-

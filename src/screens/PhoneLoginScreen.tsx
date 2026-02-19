@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
-  KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
   ScrollView,
@@ -18,14 +17,12 @@ import { StatusBar } from 'expo-status-bar';
 import { sendOTP, verifyOTP, clearOTPStorage } from '../services/otpService';
 import { storageService } from '../services/storageService';
 import { updateLastLogin } from '../services/firebaseService';
+import { useAppContext } from '../context/AppContext';
 
 type LoginStep = 'phone' | 'otp';
 
-interface PhoneLoginScreenProps {
-  onLoginSuccess?: (phoneNumber: string) => void;
-}
-
-const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) => {
+const PhoneLoginScreen: React.FC = () => {
+  const { onLoginSuccess } = useAppContext();
   const [step, setStep] = useState<LoginStep>('phone');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
@@ -43,7 +40,7 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
     if (digits.length === 0) {
       return '';
     }
-    
+
     if (digits.length <= 5) {
       return `+91 ${digits}`;
     } else {
@@ -54,20 +51,20 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
   const handlePhoneChange = (text: string) => {
     // Extract only digits from the input
     const digitsOnly = text.replace(/\D/g, '');
-    
+
     // Limit to 10 digits
     const limitedDigits = digitsOnly.slice(0, 10);
-    
+
     // Only update if digits actually changed (prevents unnecessary re-renders)
     if (limitedDigits === previousDigitsRef.current) {
       return;
     }
-    
+
     previousDigitsRef.current = limitedDigits;
-    
+
     // Store raw digits
     setRawPhoneNumber(limitedDigits);
-    
+
     // Format for display
     const formatted = formatPhoneNumber(limitedDigits);
     setPhoneNumber(formatted);
@@ -113,7 +110,7 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
   const handleOTPChange = (text: string, index: number) => {
     // Only allow digits
     const cleaned = text.replace(/\D/g, '');
-    
+
     if (cleaned.length > 1) {
       // Handle paste
       const pastedOTP = cleaned.slice(0, 6).split('');
@@ -124,7 +121,7 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
         }
       });
       setOtp(newOtp);
-      
+
       // Focus on the last filled input or next empty
       const nextIndex = Math.min(index + pastedOTP.length, 5);
       otpInputRefs.current[nextIndex]?.focus();
@@ -149,7 +146,7 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
 
   const handleVerifyOTP = useCallback(async () => {
     const otpString = otp.join('');
-    
+
     if (otpString.length !== 6) {
       Alert.alert('Invalid OTP', 'Please enter the complete 6-digit OTP');
       return;
@@ -163,7 +160,7 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
     setLoading(true);
     // Dismiss keyboard before verification
     Keyboard.dismiss();
-    
+
     // Verify with the raw 10-digit phone number
     const response = await verifyOTP(rawPhoneNumber, otpString);
     setLoading(false);
@@ -171,25 +168,23 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
     if (response.success) {
       // Navigate to home screen
       const formattedPhone = phoneNumber || `+91 ${rawPhoneNumber}`;
-      
+
       // Clear OTP storage after successful login
       clearOTPStorage(rawPhoneNumber);
-      
+
       // Save auth token if available
       if (response.token) {
         await storageService.saveAuthToken(response.token);
       }
-      
+
       // Update last login in Firebase (non-blocking)
       updateLastLogin(formattedPhone).catch((error) => {
         console.warn('Failed to update last login in Firebase:', error);
       });
-      
-      // Call the onLoginSuccess callback
-      if (onLoginSuccess) {
-        onLoginSuccess(formattedPhone);
-      }
-      
+
+      // Update global context - this will trigger RootNavigator to switch stacks
+      await onLoginSuccess(formattedPhone);
+
       console.log('Login successful, token:', response.token);
     } else {
       // Only show error if we're still on the OTP screen
@@ -220,7 +215,7 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
 
   const handleResendOTP = async () => {
     if (resendTimer > 0) return;
-    
+
     setLoading(true);
     // Resend OTP with the raw 10-digit phone number
     const response = await sendOTP(rawPhoneNumber);
@@ -251,7 +246,7 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
     const keyboardWillShow = Keyboard.addListener(showEvent, (event) => {
       const keyboardHeightValue = event.endCoordinates.height;
       const duration = Platform.OS === 'ios' ? (event.duration || 300) : 300;
-      
+
       Animated.parallel([
         Animated.timing(keyboardHeight, {
           toValue: keyboardHeightValue,
@@ -268,7 +263,7 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
 
     const keyboardWillHide = Keyboard.addListener(hideEvent, (event) => {
       const duration = Platform.OS === 'ios' ? (event.duration || 300) : 300;
-      
+
       Animated.parallel([
         Animated.timing(keyboardHeight, {
           toValue: 0,
@@ -292,7 +287,7 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
   return (
     <View style={styles.container}>
       <StatusBar style="dark" />
-      
+
       <Animated.View
         style={[
           styles.animatedContainer,
@@ -309,146 +304,146 @@ const PhoneLoginScreen: React.FC<PhoneLoginScreenProps> = ({ onLoginSuccess }) =
           keyboardDismissMode="interactive"
         >
           <View style={styles.content}>
-          {/* Logo/Header */}
-          <View style={styles.header}>
-            <Image 
-              source={require('../../assets/icon.png')} 
-              style={styles.logo}
-              resizeMode="contain"
-            />
-            <Text style={styles.title}>Kiddo Delivery</Text>
-            <Text style={styles.subtitle}>
-              {step === 'phone' ? 'Enter your phone number' : 'Enter OTP'}
-            </Text>
-          </View>
+            {/* Logo/Header */}
+            <View style={styles.header}>
+              <Image
+                source={require('../../assets/icon.png')}
+                style={styles.logo}
+                resizeMode="contain"
+              />
+              <Text style={styles.title}>Kiddo Delivery</Text>
+              <Text style={styles.subtitle}>
+                {step === 'phone' ? 'Enter your phone number' : 'Enter OTP'}
+              </Text>
+            </View>
 
-          {step === 'phone' ? (
-            <View style={styles.phoneContainer}>
-              <View style={styles.inputContainer}>
-                <Text style={styles.label}>Phone Number</Text>
-                <View style={styles.phoneInputWrapper}>
-                  <Text style={styles.phonePrefix}>+91</Text>
-                  <TextInput
-                    ref={phoneInputRef}
-                    style={styles.phoneInput}
-                    placeholder="12345 67890"
-                    placeholderTextColor="#9CA3AF"
-                    value={
-                      rawPhoneNumber.length === 0
-                        ? ''
-                        : rawPhoneNumber.length <= 5
-                        ? rawPhoneNumber
-                        : `${rawPhoneNumber.slice(0, 5)} ${rawPhoneNumber.slice(5)}`
-                    }
-                    onChangeText={(text) => {
-                      // Extract only digits
-                      const digitsOnly = text.replace(/\D/g, '').slice(0, 10);
-                      
-                      // Always update to ensure state is in sync
-                      setRawPhoneNumber(digitsOnly);
-                      const formatted = formatPhoneNumber(digitsOnly);
-                      setPhoneNumber(formatted);
-                      previousDigitsRef.current = digitsOnly;
-                    }}
-                    keyboardType="phone-pad"
-                    maxLength={12} // 12345 67890 (with space)
-                    autoFocus
-                    returnKeyType="done"
-                    textContentType="telephoneNumber"
-                  />
+            {step === 'phone' ? (
+              <View style={styles.phoneContainer}>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Phone Number</Text>
+                  <View style={styles.phoneInputWrapper}>
+                    <Text style={styles.phonePrefix}>+91</Text>
+                    <TextInput
+                      ref={phoneInputRef}
+                      style={styles.phoneInput}
+                      placeholder="12345 67890"
+                      placeholderTextColor="#9CA3AF"
+                      value={
+                        rawPhoneNumber.length === 0
+                          ? ''
+                          : rawPhoneNumber.length <= 5
+                            ? rawPhoneNumber
+                            : `${rawPhoneNumber.slice(0, 5)} ${rawPhoneNumber.slice(5)}`
+                      }
+                      onChangeText={(text) => {
+                        // Extract only digits
+                        const digitsOnly = text.replace(/\D/g, '').slice(0, 10);
+
+                        // Always update to ensure state is in sync
+                        setRawPhoneNumber(digitsOnly);
+                        const formatted = formatPhoneNumber(digitsOnly);
+                        setPhoneNumber(formatted);
+                        previousDigitsRef.current = digitsOnly;
+                      }}
+                      keyboardType="phone-pad"
+                      maxLength={12} // 12345 67890 (with space)
+                      autoFocus
+                      returnKeyType="done"
+                      textContentType="telephoneNumber"
+                    />
+                  </View>
                 </View>
-              </View>
 
-              <TouchableOpacity
-                style={[styles.button, loading ? styles.buttonDisabled : null]}
-                onPress={handleSendOTP}
-                disabled={loading}
-              >
+                <TouchableOpacity
+                  style={[styles.button, loading ? styles.buttonDisabled : null]}
+                  onPress={handleSendOTP}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.buttonText}>Send OTP</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.otpContainer}>
+                <Text style={styles.otpLabel}>Enter the 6-digit OTP sent to</Text>
+                <Text style={styles.phoneDisplay}>{phoneNumber}</Text>
+
+                <View style={styles.otpInputContainer}>
+                  {otp.map((digit, index) => (
+                    <TextInput
+                      key={index}
+                      ref={(ref) => {
+                        otpInputRefs.current[index] = ref;
+                      }}
+                      style={[
+                        styles.otpInput,
+                        digit ? styles.otpInputFilled : null,
+                        loading ? styles.otpInputVerifying : null,
+                      ]}
+                      value={digit}
+                      onChangeText={(text) => handleOTPChange(text, index)}
+                      onKeyPress={(e) => handleOTPKeyPress(e, index)}
+                      keyboardType="number-pad"
+                      maxLength={1}
+                      selectTextOnFocus
+                      editable={!loading}
+                    />
+                  ))}
+                </View>
+
                 {loading ? (
-                  <ActivityIndicator color="#fff" />
+                  <View style={[styles.button, styles.buttonDisabled]}>
+                    <ActivityIndicator color="#fff" />
+                    <Text style={[styles.buttonText, { marginLeft: 8 }]}>Verifying...</Text>
+                  </View>
                 ) : (
-                  <Text style={styles.buttonText}>Send OTP</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.otpContainer}>
-              <Text style={styles.otpLabel}>Enter the 6-digit OTP sent to</Text>
-              <Text style={styles.phoneDisplay}>{phoneNumber}</Text>
-
-              <View style={styles.otpInputContainer}>
-                {otp.map((digit, index) => (
-                  <TextInput
-                    key={index}
-                    ref={(ref) => {
-                      otpInputRefs.current[index] = ref;
-                    }}
-                    style={[
-                      styles.otpInput,
-                      digit ? styles.otpInputFilled : null,
-                      loading ? styles.otpInputVerifying : null,
-                    ]}
-                    value={digit}
-                    onChangeText={(text) => handleOTPChange(text, index)}
-                    onKeyPress={(e) => handleOTPKeyPress(e, index)}
-                    keyboardType="number-pad"
-                    maxLength={1}
-                    selectTextOnFocus
-                    editable={!loading}
-                  />
-                ))}
-              </View>
-
-              {loading ? (
-                <View style={[styles.button, styles.buttonDisabled]}>
-                  <ActivityIndicator color="#fff" />
-                  <Text style={[styles.buttonText, { marginLeft: 8 }]}>Verifying...</Text>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  style={[styles.button, otp.join('').length === 6 ? null : styles.buttonDisabled]}
-                  onPress={handleVerifyOTP}
-                  disabled={otp.join('').length !== 6}
-                >
-                  <Text style={styles.buttonText}>Verify OTP</Text>
-                </TouchableOpacity>
-              )}
-
-              <View style={styles.resendContainer}>
-                <Text style={styles.resendText}>Didn't receive OTP? </Text>
-                <TouchableOpacity
-                  onPress={handleResendOTP}
-                  disabled={resendTimer > 0 || loading}
-                >
-                  <Text
-                    style={[
-                      styles.resendLink,
-                      (resendTimer > 0 || loading) ? styles.resendLinkDisabled : null,
-                    ]}
+                  <TouchableOpacity
+                    style={[styles.button, otp.join('').length === 6 ? null : styles.buttonDisabled]}
+                    onPress={handleVerifyOTP}
+                    disabled={otp.join('').length !== 6}
                   >
-                    {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend OTP'}
-                  </Text>
+                    <Text style={styles.buttonText}>Verify OTP</Text>
+                  </TouchableOpacity>
+                )}
+
+                <View style={styles.resendContainer}>
+                  <Text style={styles.resendText}>Didn't receive OTP? </Text>
+                  <TouchableOpacity
+                    onPress={handleResendOTP}
+                    disabled={resendTimer > 0 || loading}
+                  >
+                    <Text
+                      style={[
+                        styles.resendLink,
+                        (resendTimer > 0 || loading) ? styles.resendLinkDisabled : null,
+                      ]}
+                    >
+                      {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend OTP'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.changeNumberButton}
+                  onPress={() => {
+                    setStep('phone');
+                    setOtp(['', '', '', '', '', '']);
+                    setResendTimer(0);
+                    setRawPhoneNumber('');
+                    setPhoneNumber('');
+                  }}
+                >
+                  <Text style={styles.changeNumberText}>Change Phone Number</Text>
                 </TouchableOpacity>
               </View>
-
-              <TouchableOpacity
-                style={styles.changeNumberButton}
-                onPress={() => {
-                  setStep('phone');
-                  setOtp(['', '', '', '', '', '']);
-                  setResendTimer(0);
-                  setRawPhoneNumber('');
-                  setPhoneNumber('');
-                }}
-              >
-                <Text style={styles.changeNumberText}>Change Phone Number</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+            )}
           </View>
         </ScrollView>
       </Animated.View>
-      
+
       {/* Animated spacer for keyboard */}
       <Animated.View
         style={[
@@ -626,4 +621,3 @@ const styles = StyleSheet.create({
 });
 
 export default PhoneLoginScreen;
-

@@ -56,6 +56,39 @@ export const getCurrentLocation = async (): Promise<LocationData | null> => {
 };
 
 /**
+ * Get current address string (City, Region)
+ */
+export const getCurrentAddress = async (): Promise<string | null> => {
+  try {
+    const hasPermission = await requestLocationPermission();
+    if (!hasPermission) return null;
+
+    const location = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+
+    const address = await Location.reverseGeocodeAsync({
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude,
+    });
+
+    if (address && address.length > 0) {
+      const { city, region, street, name } = address[0];
+      // Prefer City, Region. Fallback to other fields if missing.
+      const parts = [city, region].filter(Boolean);
+      if (parts.length > 0) return parts.join(', ');
+      
+      // Fallback
+      return street || name || 'Unknown Location';
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting address:', error);
+    return null;
+  }
+};
+
+/**
  * Start tracking rider location and syncing to Firestore
  */
 export const startLocationTracking = async (riderId: string): Promise<boolean> => {
@@ -121,4 +154,3 @@ export const stopLocationTracking = (): void => {
 export const isLocationTrackingActive = (): boolean => {
   return isTracking;
 };
-

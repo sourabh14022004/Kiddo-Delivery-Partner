@@ -33,77 +33,82 @@ const DeliverySuccessScreen: React.FC<DeliverySuccessScreenProps> = ({
   const buttonTranslateY = useRef(new Animated.Value(30)).current;
 
   useEffect(() => {
-    // Animate rings first (glow effect)
+    // Animate rings first (glow effect) - Faster
     Animated.parallel([
       Animated.timing(ring1Scale, {
         toValue: 1,
-        duration: 600,
+        duration: 400,
         useNativeDriver: true,
       }),
       Animated.timing(ring2Scale, {
         toValue: 1,
-        duration: 800,
+        duration: 600,
         useNativeDriver: true,
       }),
       Animated.timing(ring3Scale, {
         toValue: 1,
-        duration: 1000,
+        duration: 800,
         useNativeDriver: true,
       }),
       Animated.timing(ringOpacity, {
         toValue: 0.4,
-        duration: 600,
+        duration: 400,
         useNativeDriver: true,
       }),
     ]).start();
 
-    // Animate circle appearance with bounce
+    // Animate circle appearance with bounce - Optimized Sequence
     Animated.sequence([
       Animated.parallel([
         Animated.spring(circleScale, {
           toValue: 1,
-          tension: 50,
+          tension: 80,
           friction: 7,
           useNativeDriver: true,
         }),
         Animated.timing(circleOpacity, {
           toValue: 1,
-          duration: 400,
+          duration: 300,
           useNativeDriver: true,
         }),
       ]),
-      // Animate checkmark with bounce
-      Animated.spring(checkmarkScale, {
-        toValue: 1,
-        tension: 50,
-        friction: 5,
-        useNativeDriver: true,
-      }),
-      // Animate text content
+      // Animate checkmark and content together for snappier feel
       Animated.parallel([
-        Animated.timing(textOpacity, {
+        Animated.spring(checkmarkScale, {
           toValue: 1,
-          duration: 500,
+          tension: 80,
+          friction: 5,
           useNativeDriver: true,
         }),
-        Animated.timing(textTranslateY, {
-          toValue: 0,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-      ]),
-      // Animate button
-      Animated.parallel([
-        Animated.timing(buttonOpacity, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-        Animated.timing(buttonTranslateY, {
-          toValue: 0,
-          duration: 500,
-          useNativeDriver: true,
-        }),
+        // Stagger text and button slightly relative to checkmark
+        Animated.stagger(100, [
+          Animated.parallel([
+            Animated.timing(textOpacity, {
+              toValue: 1,
+              duration: 400,
+              useNativeDriver: true,
+            }),
+            Animated.spring(textTranslateY, {
+              toValue: 0,
+              tension: 60,
+              friction: 8,
+              useNativeDriver: true,
+            }),
+          ]),
+          Animated.parallel([
+            Animated.timing(buttonOpacity, {
+              toValue: 1,
+              duration: 400,
+              useNativeDriver: true,
+            }),
+            Animated.spring(buttonTranslateY, {
+              toValue: 0,
+              tension: 60,
+              friction: 8,
+              useNativeDriver: true,
+            }),
+          ]),
+        ]),
       ]),
     ]).start();
   }, []);
@@ -111,23 +116,23 @@ const DeliverySuccessScreen: React.FC<DeliverySuccessScreenProps> = ({
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="light" />
-      
+
       {/* Background gradient effects */}
       <View style={styles.backgroundGradientLeft} />
       <View style={styles.backgroundGradientRight} />
-      
+
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Delivery Complete</Text>
       </View>
 
-      <ScrollView 
-        style={styles.scrollView} 
+      <ScrollView
+        style={styles.scrollView}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
         {/* Success Circle with Glow Effect - Center */}
-        <Animated.View 
+        <Animated.View
           style={[
             styles.successCircleContainer,
             {
@@ -166,9 +171,9 @@ const DeliverySuccessScreen: React.FC<DeliverySuccessScreenProps> = ({
               },
             ]}
           />
-          
+
           {/* Main success circle */}
-          <Animated.View 
+          <Animated.View
             style={[
               styles.successCircle,
               {
@@ -182,7 +187,7 @@ const DeliverySuccessScreen: React.FC<DeliverySuccessScreenProps> = ({
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
             >
-              <Animated.Text 
+              <Animated.Text
                 style={[
                   styles.successCheckmark,
                   {
@@ -197,7 +202,7 @@ const DeliverySuccessScreen: React.FC<DeliverySuccessScreenProps> = ({
         </Animated.View>
 
         {/* Delivery Status Text */}
-        <Animated.View 
+        <Animated.View
           style={[
             styles.statusTextContainer,
             {
