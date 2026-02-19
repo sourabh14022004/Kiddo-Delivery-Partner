@@ -601,10 +601,7 @@ const OrderPreviewScreen: React.FC = () => {
     insets,
     navigation,
     getStatusDisplay,
-    canPickOrder,
     picking,
-    isDelivered,
-    isAssignedToCurrentUser,
     activeTab,
     formatDate,
     formatDateShort,
@@ -614,7 +611,6 @@ const OrderPreviewScreen: React.FC = () => {
     handlePickOrder,
     handleViewOnMap,
     phoneNumber,
-    tabs,
   ]);
 
   return renderContent;
